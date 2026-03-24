@@ -2,25 +2,28 @@ import { provide } from '@lit/context';
 import type { ReactiveControllerHost } from 'lit';
 import { html, LitElement } from 'lit';
 import { property } from 'lit/decorators.js';
-import type { CustomEditorIds, WebviewIds, WebviewViewIds } from '../../../constants.views';
-import type { Deferrable } from '../../../system/function/debounce';
-import { debounce } from '../../../system/function/debounce';
-import type { WebviewFocusChangedParams } from '../../protocol';
+import type { GlWebviewCommands } from '../../../constants.commands.js';
+import type { CustomEditorIds, WebviewIds, WebviewTypes } from '../../../constants.views.js';
+import type { Deferrable } from '../../../system/function/debounce.js';
+import { debounce } from '../../../system/function/debounce.js';
+import { createWebviewCommandLink } from '../../../system/webview.js';
+import type { WebviewFocusChangedParams, WebviewState } from '../../protocol.js';
 import {
 	DidChangeWebviewFocusNotification,
 	DidChangeWebviewVisibilityNotification,
 	WebviewFocusChangedCommand,
-	WebviewReadyCommand,
-} from '../../protocol';
-import { GlElement } from './components/element';
-import { ipcContext } from './contexts/ipc';
-import { loggerContext, LoggerContext } from './contexts/logger';
-import { promosContext, PromosContext } from './contexts/promos';
-import { telemetryContext, TelemetryContext } from './contexts/telemetry';
-import type { Disposable } from './events';
-import { HostIpc } from './ipc';
-import type { ThemeChangeEvent } from './theme';
-import { computeThemeColors, onDidChangeTheme, watchThemeColors } from './theme';
+} from '../../protocol.js';
+import { GlElement } from './components/element.js';
+import { ipcContext } from './contexts/ipc.js';
+import { loggerContext, LoggerContext } from './contexts/logger.js';
+import { promosContext, PromosContext } from './contexts/promos.js';
+import { telemetryContext, TelemetryContext } from './contexts/telemetry.js';
+import type { WebviewContext } from './contexts/webview.js';
+import { webviewContext } from './contexts/webview.js';
+import type { Disposable } from './events.js';
+import { HostIpc } from './ipc.js';
+import type { ThemeChangeEvent } from './theme.js';
+import { computeThemeColors, onDidChangeTheme, watchThemeColors } from './theme.js';
 
 export type ReactiveElementHost = ReactiveControllerHost & HTMLElement;
 
@@ -29,10 +32,8 @@ export interface StateProvider<State> extends Disposable {
 }
 
 export abstract class GlAppHost<
-	State extends { webviewId: CustomEditorIds | WebviewIds | WebviewViewIds; timestamp: number } = {
-		webviewId: CustomEditorIds | WebviewIds | WebviewViewIds;
-		timestamp: number;
-	},
+	State extends WebviewState<CustomEditorIds | WebviewIds> = WebviewState<CustomEditorIds | WebviewIds>,
+	Provider extends StateProvider<State> = StateProvider<State>,
 > extends GlElement {
 	static override shadowRootOptions: ShadowRootInit = {
 		...LitElement.shadowRootOptions,
@@ -54,8 +55,11 @@ export abstract class GlAppHost<
 	@provide({ context: telemetryContext })
 	protected _telemetry!: TelemetryContext;
 
-	@property({ type: Object, noAccessor: true })
-	private bootstrap!: State;
+	@provide({ context: webviewContext })
+	protected _webview!: WebviewContext;
+
+	@property({ type: String, noAccessor: true })
+	private bootstrap!: string;
 	protected onThemeUpdated?(e: ThemeChangeEvent): void;
 
 	get state(): State {
@@ -66,10 +70,9 @@ export abstract class GlAppHost<
 	private _focused?: boolean;
 	private _inputFocused?: boolean;
 	private _sendWebviewFocusChangedCommandDebounced!: Deferrable<(params: WebviewFocusChangedParams) => void>;
-	private _stateProvider!: StateProvider<State>;
+	protected _stateProvider!: Provider;
 
-	protected abstract createStateProvider(state: State, ipc: HostIpc): StateProvider<State>;
-	protected onPersistState?(state: State): void;
+	protected abstract createStateProvider(bootstrap: string, ipc: HostIpc, logger: LoggerContext): Provider;
 	protected onWebviewFocusChanged?(focused: boolean): void;
 	protected onWebviewVisibilityChanged?(visible: boolean): void;
 
@@ -77,15 +80,27 @@ export abstract class GlAppHost<
 		super.connectedCallback?.();
 
 		this._logger = new LoggerContext(this.name);
-		this._logger.log('connected');
+		this._logger.debug('connected');
 
 		this._ipc = new HostIpc(this.name);
-		this._ipc.sendCommand(WebviewReadyCommand, undefined);
 
-		const state = this.bootstrap;
+		const bootstrap = this.bootstrap;
 		this.bootstrap = undefined!;
-		this._ipc.replaceIpcPromisesWithPromises(state);
-		this.onPersistState?.(state);
+
+		this._stateProvider = this.createStateProvider(bootstrap, this._ipc, this._logger);
+
+		const { webviewId, webviewInstanceId } = this._stateProvider.state;
+		this._webview = {
+			webviewId: webviewId,
+			webviewInstanceId: webviewInstanceId,
+			createCommandLink: (command, args) => {
+				if (command.endsWith(':')) {
+					command = `${command}${webviewId.split('.').at(-1) as WebviewTypes}` as GlWebviewCommands;
+				}
+
+				return createWebviewCommandLink(command as GlWebviewCommands, webviewId, webviewInstanceId, args);
+			},
+		};
 
 		const themeEvent = computeThemeColors();
 		if (this.onThemeUpdated != null) {
@@ -95,7 +110,7 @@ export abstract class GlAppHost<
 		}
 
 		this.disposables.push(
-			(this._stateProvider = this.createStateProvider(state, this._ipc)),
+			this._stateProvider,
 			this._ipc.onReceiveMessage(msg => {
 				switch (true) {
 					case DidChangeWebviewFocusNotification.is(msg):
@@ -139,7 +154,7 @@ export abstract class GlAppHost<
 	override disconnectedCallback(): void {
 		super.disconnectedCallback?.();
 
-		this._logger.log('disconnected');
+		this._logger.debug('disconnected');
 
 		document.removeEventListener('focusin', this.onFocusIn);
 		document.removeEventListener('focusout', this.onFocusOut);

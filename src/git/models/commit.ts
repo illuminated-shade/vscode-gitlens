@@ -1,37 +1,38 @@
 /* eslint-disable @typescript-eslint/no-restricted-imports -- TODO need to deal with sharing rich class shapes to webviews */
 import { Uri } from 'vscode';
-import type { EnrichedAutolink } from '../../autolinks/models/autolinks';
-import { getAvatarUri, getCachedAvatarUri } from '../../avatars';
-import type { GravatarDefaultStyle } from '../../config';
-import { GlyphChars } from '../../constants';
-import type { Container } from '../../container';
-import { ensureArray } from '../../system/array';
-import { formatDate, fromNow } from '../../system/date';
-import { gate } from '../../system/decorators/-webview/gate';
-import { memoize } from '../../system/decorators/-webview/memoize';
-import { Lazy } from '../../system/lazy';
-import { getLoggableName } from '../../system/logger';
-import { getSettledValue } from '../../system/promise';
-import { pluralize } from '../../system/string';
-import type { DiffRange, PreviousRangeComparisonUrisResult } from '../gitProvider';
-import { GitUri } from '../gitUri';
-import type { RemoteProvider } from '../remotes/remoteProvider';
-import { getChangedFilesCount } from '../utils/commit.utils';
+import type { EnrichedAutolink } from '../../autolinks/models/autolinks.js';
+import { getAvatarUri, getCachedAvatarUri } from '../../avatars.js';
+import type { GravatarDefaultStyle } from '../../config.js';
+import { GlyphChars } from '../../constants.js';
+import type { Container } from '../../container.js';
+import { ensureArray } from '../../system/array.js';
+import { formatDate, fromNow } from '../../system/date.js';
+import { gate } from '../../system/decorators/gate.js';
+import { loggable } from '../../system/decorators/log.js';
+import { memoize } from '../../system/decorators/memoize.js';
+import { Lazy } from '../../system/lazy.js';
+import { getSettledValue } from '../../system/promise.js';
+import { pluralize } from '../../system/string.js';
+import type { DiffRange, PreviousRangeComparisonUrisResult } from '../gitProvider.js';
+import { GitUri } from '../gitUri.js';
+import type { RemoteProvider } from '../remotes/remoteProvider.js';
+import { getChangedFilesCount } from '../utils/commit.utils.js';
 import {
 	isSha,
 	isUncommitted,
 	isUncommittedStaged,
 	isUncommittedStagedWithParentSuffix,
 	isUncommittedWithParentSuffix,
-} from '../utils/revision.utils';
-import type { GitDiffFileStats } from './diff';
-import type { GitFile } from './file';
-import { GitFileChange } from './fileChange';
-import type { PullRequest } from './pullRequest';
-import type { GitRevisionReference, GitStashReference } from './reference';
-import type { GitRemote } from './remote';
-import type { Repository } from './repository';
-import { uncommitted, uncommittedStaged } from './revision';
+} from '../utils/revision.utils.js';
+import type { GitDiffFileStats } from './diff.js';
+import type { GitFile } from './file.js';
+import { GitFileChange } from './fileChange.js';
+import type { PullRequest } from './pullRequest.js';
+import type { GitRevisionReference, GitStashReference } from './reference.js';
+import type { GitRemote } from './remote.js';
+import type { Repository } from './repository.js';
+import { uncommitted, uncommittedStaged } from './revision.js';
+import type { CommitSignature } from './signature.js';
 
 const stashNumberRegex = /stash@{(\d+)}/;
 
@@ -54,9 +55,12 @@ export interface GitCommitFileset {
 		| undefined;
 }
 
+@loggable(i => `${i.repoPath}|${i.shortSha}`)
 export class GitCommit implements GitRevisionReference {
 	private _stashUntrackedFilesLoaded = false;
 	private _recomputeStats = false;
+	private _signature: CommitSignature | undefined | null;
+	private _signed: boolean | undefined;
 
 	readonly lines: GitCommitLine[];
 	readonly ref: string;
@@ -66,6 +70,7 @@ export class GitCommit implements GitRevisionReference {
 	readonly stashNumber: string | undefined;
 	readonly stashOnRef: string | undefined;
 	readonly tips: string[] | undefined;
+	readonly parentTimestamps?: GitStashParentInfo[] | undefined;
 
 	constructor(
 		private readonly container: Container,
@@ -82,10 +87,12 @@ export class GitCommit implements GitRevisionReference {
 		tips?: string[],
 		stashName?: string | undefined,
 		stashOnRef?: string | undefined,
+		parentTimestamps?: GitStashParentInfo[] | undefined,
 	) {
 		this.ref = sha;
 		this.shortSha = sha.substring(0, this.container.CommitShaFormatting.length);
 		this.tips = tips;
+		this.parentTimestamps = parentTimestamps;
 
 		if (stashName) {
 			this.refType = 'stash';
@@ -123,10 +130,6 @@ export class GitCommit implements GitRevisionReference {
 		}
 
 		this.lines = ensureArray(lines) ?? [];
-	}
-
-	toString(): string {
-		return `${getLoggableName(this)}(${this.repoPath}|${this.shortSha})`;
 	}
 
 	get date(): Date {
@@ -194,6 +197,8 @@ export class GitCommit implements GitRevisionReference {
 				file.stats ?? current?.stats,
 				file.staged ?? current?.staged,
 				file.range ?? current?.range,
+				file.mode ?? current?.mode,
+				file.submodule ?? current?.submodule,
 			);
 		});
 	}
@@ -302,8 +307,6 @@ export class GitCommit implements GitRevisionReference {
 					let files = status.files.flatMap(f => f.getPseudoFileChanges());
 					if (isUncommittedStaged(this.sha)) {
 						files = files.filter(f => f.staged);
-					} else {
-						files = files.filter(f => !f.staged);
 					}
 
 					const pathspec = this.fileset?.filtered?.pathspec;
@@ -315,8 +318,23 @@ export class GitCommit implements GitRevisionReference {
 			}
 
 			if (options?.include?.stats) {
-				const stats = await repo?.git.diff.getChangedFilesCount(this.sha);
-				this._stats = stats;
+				this._recomputeStats = true;
+				this.computeFileStats();
+
+				const stats = await repo?.git.diff.getChangedFilesCount(
+					this.isUncommittedStaged ? uncommitted : 'HEAD',
+				);
+				if (stats != null) {
+					if (this._stats != null) {
+						this._stats = {
+							...this._stats,
+							additions: stats.additions,
+							deletions: stats.deletions,
+						};
+					} else {
+						this._stats = stats;
+					}
+				}
 				this._recomputeStats = false;
 			} else {
 				this._recomputeStats = true;
@@ -356,11 +374,7 @@ export class GitCommit implements GitRevisionReference {
 		if (!this._recomputeStats || this.fileset == null) return;
 		this._recomputeStats = false;
 
-		const changedFiles = {
-			added: 0,
-			deleted: 0,
-			changed: 0,
-		};
+		const changedFiles = { added: 0, deleted: 0, changed: 0 };
 
 		let additions = 0;
 		let deletions = 0;
@@ -492,7 +506,7 @@ export class GitCommit implements GitRevisionReference {
 
 		let result = fileStats.join(separator);
 		if (style === 'stats' && options?.color) {
-			result = /*html*/ `<span style="background-color:var(--vscode-textCodeBlock-background);border-radius:3px;">&nbsp;${result}&nbsp;&nbsp;</span>`;
+			result = /*html*/ `<span style="background-color:var(--vscode-textCodeBlock-background);border-radius:3px;">&nbsp;${result}&nbsp;&nbsp;</span> `;
 		}
 		if (options?.addParenthesesToFileStats) {
 			result = `(${result})`;
@@ -550,7 +564,6 @@ export class GitCommit implements GitRevisionReference {
 		if (this.isUncommitted) return undefined;
 
 		remote ??= await this.container.git.getRepositoryService(this.repoPath).remotes.getBestRemoteWithIntegration();
-		if (remote?.provider == null) return undefined;
 
 		// TODO@eamodio should we cache these? Seems like we would use more memory than it's worth
 		// async function getCore(this: GitCommit): Promise<Map<string, EnrichedAutolink> | undefined> {
@@ -573,6 +586,28 @@ export class GitCommit implements GitRevisionReference {
 
 	getCachedAvatarUri(options?: { size?: number }): Uri | undefined {
 		return this.author.getCachedAvatarUri(options);
+	}
+
+	async getSignature(): Promise<CommitSignature | undefined> {
+		if (this.isUncommitted) return undefined;
+		if (this._signature === null) return undefined;
+		if (this._signature !== undefined) return this._signature;
+
+		// Fetch signature from git
+		this._signature =
+			(await this.container.git.getRepositoryService(this.repoPath).commits.getCommitSignature?.(this.sha)) ??
+			null;
+
+		return this._signature ?? undefined;
+	}
+
+	async isSigned(): Promise<boolean> {
+		if (this.isUncommitted) return false;
+		if (this._signed != null) return this._signed;
+
+		this._signed =
+			(await this.container.git.getRepositoryService(this.repoPath).commits.isCommitSigned?.(this.sha)) ?? false;
+		return this._signed;
 	}
 
 	async getCommitForFile(file: string | GitFile, staged?: boolean): Promise<GitCommit | undefined> {
@@ -616,7 +651,9 @@ export class GitCommit implements GitRevisionReference {
 		});
 	}
 
-	@memoize<GitCommit['getPreviousComparisonUrisForRange']>((r, rev) => `${r.startLine}-${r.endLine}|${rev ?? ''}`)
+	@memoize<GitCommit['getPreviousComparisonUrisForRange']>({
+		resolver: (r, rev) => `${r.startLine}-${r.endLine}|${rev ?? ''}`,
+	})
 	getPreviousComparisonUrisForRange(
 		range: DiffRange,
 		rev?: string,
@@ -628,6 +665,7 @@ export class GitCommit implements GitRevisionReference {
 						this.file.uri,
 						rev ?? (this.sha === uncommitted ? undefined : this.sha),
 						range,
+						this.isUncommitted ? { skipFirstRev: false } : undefined,
 					)
 			: Promise.resolve(undefined);
 	}
@@ -679,7 +717,7 @@ export class GitCommit implements GitRevisionReference {
 	}
 
 	@gate()
-	async isPushed(): Promise<boolean> {
+	isPushed(): Promise<boolean> {
 		return this.container.git.getRepositoryService(this.repoPath).commits.hasCommitBeenPushed(this.ref);
 	}
 
@@ -689,6 +727,7 @@ export class GitCommit implements GitRevisionReference {
 		fileset?: GitCommitFileset | null;
 		lines?: GitCommitLine[] | null;
 		stats?: GitCommitStats | null;
+		parentTimestamps?: GitStashParentInfo[] | null;
 	}): T {
 		return new GitCommit(
 			this.container,
@@ -705,7 +744,34 @@ export class GitCommit implements GitRevisionReference {
 			this.tips,
 			this.stashName,
 			this.stashOnRef,
+			this.getChangedValue(changes.parentTimestamps, this.parentTimestamps),
 		) as T;
+	}
+
+	/**
+	 * Creates a copy of this commit with a different repoPath.
+	 * Used for worktree-aware caching where shared data needs per-worktree IDs.
+	 */
+	withRepoPath<T extends GitCommit>(repoPath: string): T {
+		return repoPath === this.repoPath
+			? (this as unknown as T)
+			: (new GitCommit(
+					this.container,
+					repoPath,
+					this.sha,
+					this.author,
+					this.committer,
+					this.summary,
+					this.parents,
+					this.message,
+					this.fileset,
+					this.stats,
+					this.lines,
+					this.tips,
+					this.stashName,
+					this.stashOnRef,
+					this.parentTimestamps,
+				) as T);
 	}
 
 	protected getChangedValue<T>(change: T | null | undefined, original: T | undefined): T | undefined {
@@ -719,6 +785,7 @@ export interface GitCommitIdentityShape {
 	readonly date: Date;
 }
 
+@loggable<GitCommitIdentity>(i => i.name)
 export class GitCommitIdentity implements GitCommitIdentityShape {
 	constructor(
 		public readonly name: string,
@@ -727,7 +794,7 @@ export class GitCommitIdentity implements GitCommitIdentityShape {
 		private readonly avatarUrl?: string | undefined,
 	) {}
 
-	@memoize<GitCommitIdentity['formatDate']>(format => format ?? 'MMMM Do, YYYY h:mma')
+	@memoize<GitCommitIdentity['formatDate']>({ resolver: format => format ?? 'MMMM Do, YYYY h:mma' })
 	formatDate(format?: string | null): string {
 		return formatDate(this.date, format ?? 'MMMM Do, YYYY h:mma');
 	}
@@ -763,10 +830,17 @@ export interface GitCommitStats<Files extends number | GitDiffFileStats = number
 	readonly deletions: number;
 }
 
+export interface GitStashParentInfo {
+	readonly sha: string;
+	readonly authorDate?: number;
+	readonly committerDate?: number;
+}
+
 export interface GitStashCommit extends GitCommit {
 	readonly refType: GitStashReference['refType'];
 	readonly stashName: string;
 	readonly stashNumber: string;
+	readonly parentTimestamps?: GitStashParentInfo[];
 }
 
-export type GitCommitWithFullDetails = GitCommit & SomeNonNullable<GitCommit, 'message' | 'fileset'>;
+export type GitCommitWithFullDetails = GitCommit & RequireSomeNonNullable<GitCommit, 'message' | 'fileset'>;

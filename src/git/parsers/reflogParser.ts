@@ -1,7 +1,7 @@
-import type { Container } from '../../container';
-import { maybeStopWatch } from '../../system/stopwatch';
-import type { GitReflog } from '../models/reflog';
-import { GitReflogRecord } from '../models/reflog';
+import type { Container } from '../../container.js';
+import { maybeStopWatch } from '../../system/stopwatch.js';
+import type { GitReflog } from '../models/reflog.js';
+import { GitReflogRecord } from '../models/reflog.js';
 
 const reflogRegex = /^<r>(.+)<d>(.+?)@{(.+)}<s>(\w*)(.*?)(?::(.*))?$/gm;
 // const reflogRegex = /^<r>(.+)<d>(.+?)@{(.+)}<s>(\w*)(.*?)(?::(.*))?<n>(.*)$/gm;
@@ -26,7 +26,7 @@ export function parseGitRefLog(
 	limit: number,
 	totalLimit: number,
 ): GitReflog | undefined {
-	using sw = maybeStopWatch(`Git.parseRefLog(${repoPath})`, { log: false, logLevel: 'debug' });
+	using sw = maybeStopWatch(`Git.parseRefLog(${repoPath})`, { log: { onlyExit: true, level: 'debug' } });
 	if (!data) {
 		sw?.stop({ suffix: ` no data` });
 		return undefined;

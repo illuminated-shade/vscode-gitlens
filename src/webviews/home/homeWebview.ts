@@ -1,98 +1,117 @@
 import type { ConfigurationChangeEvent } from 'vscode';
 import { Disposable, env, Uri, window, workspace } from 'vscode';
-import { ActionRunnerType } from '../../api/actionRunners';
-import type { CreatePullRequestActionContext } from '../../api/gitlens';
-import type { EnrichedAutolink } from '../../autolinks/models/autolinks';
-import { getAvatarUriFromGravatarEmail } from '../../avatars';
-import type { ChangeBranchMergeTargetCommandArgs } from '../../commands/changeBranchMergeTarget';
-import type { ExplainBranchCommandArgs } from '../../commands/explainBranch';
-import type { ExplainWipCommandArgs } from '../../commands/explainWip';
-import type { GenerateCommitsCommandArgs } from '../../commands/generateRebase';
-import type { BranchGitCommandArgs } from '../../commands/git/branch';
-import type { OpenPullRequestOnRemoteCommandArgs } from '../../commands/openPullRequestOnRemote';
-import { GlyphChars, urls } from '../../constants';
-import type { ContextKeys } from '../../constants.context';
+import { ActionRunnerType } from '../../api/actionRunners.js';
+import type { CreatePullRequestActionContext } from '../../api/gitlens.d.js';
+import type { EnrichedAutolink } from '../../autolinks/models/autolinks.js';
+import { getAvatarUriFromGravatarEmail } from '../../avatars.js';
+import type { ExplainBranchCommandArgs } from '../../commands/explainBranch.js';
+import type { ExplainWipCommandArgs } from '../../commands/explainWip.js';
+import type { BranchGitCommandArgs } from '../../commands/git/branch.js';
+import type { GlWebviewCommandsOrCommandsWithSuffix } from '../../constants.commands.js';
+import type { ContextKeys } from '../../constants.context.js';
 import {
 	isSupportedCloudIntegrationId,
 	supportedCloudIntegrationDescriptors,
 	supportedOrderedCloudIntegrationIds,
-} from '../../constants.integrations';
-import type { HomeTelemetryContext, Source } from '../../constants.telemetry';
-import type { Container } from '../../container';
-import { executeGitCommand } from '../../git/actions';
-import { openComparisonChanges } from '../../git/actions/commit';
-import { abortPausedOperation, continuePausedOperation, skipPausedOperation } from '../../git/actions/pausedOperation';
-import * as RepoActions from '../../git/actions/repository';
-import type { BranchContributionsOverview } from '../../git/gitProvider';
-import type { GitBranch } from '../../git/models/branch';
-import type { GitFileChangeShape } from '../../git/models/fileChange';
-import type { Issue } from '../../git/models/issue';
-import type { GitPausedOperationStatus } from '../../git/models/pausedOperationStatus';
-import type { PullRequest } from '../../git/models/pullRequest';
-import type { GitRemote } from '../../git/models/remote';
-import { RemoteResourceType } from '../../git/models/remoteResource';
-import type { Repository, RepositoryFileSystemChangeEvent } from '../../git/models/repository';
-import { RepositoryChange, RepositoryChangeComparisonMode } from '../../git/models/repository';
-import { uncommitted } from '../../git/models/revision';
-import type { GitStatus } from '../../git/models/status';
-import type { GitWorktree } from '../../git/models/worktree';
-import { getAssociatedIssuesForBranch } from '../../git/utils/-webview/branch.issue.utils';
-import { getBranchMergeTargetInfo } from '../../git/utils/-webview/branch.utils';
-import { getReferenceFromBranch } from '../../git/utils/-webview/reference.utils';
-import { toRepositoryShapeWithProvider } from '../../git/utils/-webview/repository.utils';
-import { sortBranches } from '../../git/utils/-webview/sorting';
-import { getOpenedWorktreesByBranch, groupWorktreesByBranch } from '../../git/utils/-webview/worktree.utils';
-import { getBranchNameWithoutRemote } from '../../git/utils/branch.utils';
-import { getComparisonRefsForPullRequest } from '../../git/utils/pullRequest.utils';
-import { createRevisionRange } from '../../git/utils/revision.utils';
-import type { AIModelChangeEvent } from '../../plus/ai/aiProviderService';
-import { showPatchesView } from '../../plus/drafts/actions';
-import type { Subscription } from '../../plus/gk/models/subscription';
-import type { SubscriptionChangeEvent } from '../../plus/gk/subscriptionService';
-import { isAiAllAccessPromotionActive } from '../../plus/gk/utils/-webview/promo.utils';
-import { isSubscriptionTrialOrPaidFromState } from '../../plus/gk/utils/subscription.utils';
-import type { ConfiguredIntegrationsChangeEvent } from '../../plus/integrations/authentication/configuredIntegrationService';
-import { providersMetadata } from '../../plus/integrations/providers/models';
-import type { LaunchpadCategorizedResult } from '../../plus/launchpad/launchpadProvider';
-import { getLaunchpadItemGroups } from '../../plus/launchpad/launchpadProvider';
-import { getLaunchpadSummary } from '../../plus/launchpad/utils/-webview/launchpad.utils';
-import type { StartWorkCommandArgs } from '../../plus/startWork/startWork';
-import { showRepositoryPicker } from '../../quickpicks/repositoryPicker';
+} from '../../constants.integrations.js';
+import { urls } from '../../constants.js';
+import type { HomeTelemetryContext } from '../../constants.telemetry.js';
+import type { WalkthroughContextKeys } from '../../constants.walkthroughs.js';
+import type { Container } from '../../container.js';
+import { revealBranch } from '../../git/actions/branch.js';
+import { openComparisonChanges } from '../../git/actions/commit.js';
+import {
+	abortPausedOperation,
+	continuePausedOperation,
+	showPausedOperationStatus,
+	skipPausedOperation,
+} from '../../git/actions/pausedOperation.js';
+import * as RepoActions from '../../git/actions/repository.js';
+import { revealWorktree } from '../../git/actions/worktree.js';
+import { executeGitCommand } from '../../git/actions.js';
+import { PushError } from '../../git/errors.js';
+import type { BranchContributionsOverview } from '../../git/gitProvider.js';
+import type { GitBranch } from '../../git/models/branch.js';
+import type { GitFileChangeShape } from '../../git/models/fileChange.js';
+import type { Issue } from '../../git/models/issue.js';
+import type { GitPausedOperationStatus } from '../../git/models/pausedOperationStatus.js';
+import type { PullRequest } from '../../git/models/pullRequest.js';
+import type { GitRemote } from '../../git/models/remote.js';
+import { RemoteResourceType } from '../../git/models/remoteResource.js';
+import type { Repository, RepositoryFileSystemChangeEvent } from '../../git/models/repository.js';
+import { uncommitted } from '../../git/models/revision.js';
+import type { GitStatus } from '../../git/models/status.js';
+import type { GitWorktree } from '../../git/models/worktree.js';
+import { getAssociatedIssuesForBranch } from '../../git/utils/-webview/branch.issue.utils.js';
+import { getBranchMergeTargetInfo } from '../../git/utils/-webview/branch.utils.js';
+import { getReferenceFromBranch } from '../../git/utils/-webview/reference.utils.js';
+import { toRepositoryShapeWithProvider } from '../../git/utils/-webview/repository.utils.js';
+import { sortBranches } from '../../git/utils/-webview/sorting.js';
+import { getOpenedWorktreesByBranch, groupWorktreesByBranch } from '../../git/utils/-webview/worktree.utils.js';
+import { getBranchNameWithoutRemote } from '../../git/utils/branch.utils.js';
+import { getComparisonRefsForPullRequest } from '../../git/utils/pullRequest.utils.js';
+import { createRevisionRange } from '../../git/utils/revision.utils.js';
+import { showGitErrorMessage } from '../../messages.js';
+import type { AIModelChangeEvent } from '../../plus/ai/aiProviderService.js';
+import { showPatchesView } from '../../plus/drafts/actions.js';
+import type { Subscription } from '../../plus/gk/models/subscription.js';
+import type { SubscriptionChangeEvent } from '../../plus/gk/subscriptionService.js';
+import { isMcpBannerEnabled, mcpRegistrationAllowed } from '../../plus/gk/utils/-webview/mcp.utils.js';
+import { isAiAllAccessPromotionActive } from '../../plus/gk/utils/-webview/promo.utils.js';
+import {
+	getCommunitySubscription,
+	isSubscriptionTrialOrPaidFromState,
+} from '../../plus/gk/utils/subscription.utils.js';
+import type { ConfiguredIntegrationsChangeEvent } from '../../plus/integrations/authentication/configuredIntegrationService.js';
+import type { ConnectionStateChangeEvent } from '../../plus/integrations/integrationService.js';
+import { providersMetadata } from '../../plus/integrations/providers/models.js';
+import type { LaunchpadCategorizedResult } from '../../plus/launchpad/launchpadProvider.js';
+import { getLaunchpadItemGroups } from '../../plus/launchpad/launchpadProvider.js';
+import { getLaunchpadSummary } from '../../plus/launchpad/utils/-webview/launchpad.utils.js';
+import type { StartWorkCommandArgs } from '../../plus/startWork/startWork.js';
+import { getRepositoryPickerTitleAndPlaceholder, showRepositoryPicker } from '../../quickpicks/repositoryPicker.js';
 import {
 	executeActionCommand,
 	executeCommand,
 	executeCoreCommand,
 	registerCommand,
-} from '../../system/-webview/command';
-import { configuration } from '../../system/-webview/configuration';
-import { getContext, onDidChangeContext } from '../../system/-webview/context';
-import { openUrl } from '../../system/-webview/vscode/uris';
-import { openWorkspace } from '../../system/-webview/vscode/workspaces';
-import { debug, log } from '../../system/decorators/log';
-import type { Deferrable } from '../../system/function/debounce';
-import { debounce } from '../../system/function/debounce';
-import { filterMap } from '../../system/iterable';
-import { getSettledValue } from '../../system/promise';
-import { SubscriptionManager } from '../../system/subscriptionManager';
-import type { UriTypes } from '../../uris/deepLinks/deepLink';
-import { DeepLinkServiceState, DeepLinkType } from '../../uris/deepLinks/deepLink';
-import type { ShowInCommitGraphCommandArgs } from '../plus/graph/registration';
-import type { Change } from '../plus/patchDetails/protocol';
-import type { TimelineCommandArgs } from '../plus/timeline/registration';
-import type { IpcMessage } from '../protocol';
-import type { WebviewHost, WebviewProvider, WebviewShowingArgs } from '../webviewProvider';
-import type { WebviewShowOptions } from '../webviewsController';
+	registerWebviewCommand,
+} from '../../system/-webview/command.js';
+import { configuration } from '../../system/-webview/configuration.js';
+import { getContext, onDidChangeContext } from '../../system/-webview/context.js';
+import type { StorageChangeEvent } from '../../system/-webview/storage.js';
+import { openUrl } from '../../system/-webview/vscode/uris.js';
+import { openWorkspace } from '../../system/-webview/vscode/workspaces.js';
+import { createCommandDecorator, getWebviewCommand } from '../../system/decorators/command.js';
+import { debug, trace } from '../../system/decorators/log.js';
+import type { Deferrable } from '../../system/function/debounce.js';
+import { debounce } from '../../system/function/debounce.js';
+import { filterMap } from '../../system/iterable.js';
+import { getLoggableName, Logger } from '../../system/logger.js';
+import { maybeStartScopedLogger } from '../../system/logger.scope.js';
+import { hasKeys } from '../../system/object.js';
+import { getSettledValue } from '../../system/promise.js';
+import { SubscriptionManager } from '../../system/subscriptionManager.js';
+import { isWebviewContext } from '../../system/webview.js';
+import type { UriTypes } from '../../uris/deepLinks/deepLink.js';
+import { DeepLinkServiceState, DeepLinkType } from '../../uris/deepLinks/deepLink.js';
+import type { IpcParams, IpcResponse } from '../ipc/handlerRegistry.js';
+import { ipcCommand, ipcRequest } from '../ipc/handlerRegistry.js';
+import type { ComposerCommandArgs } from '../plus/composer/registration.js';
+import type { ShowInCommitGraphCommandArgs } from '../plus/graph/registration.js';
+import type { Change } from '../plus/patchDetails/protocol.js';
+import type { TimelineCommandArgs } from '../plus/timeline/registration.js';
+import type { WebviewHost, WebviewProvider, WebviewShowingArgs } from '../webviewProvider.js';
+import type { WebviewShowOptions } from '../webviewsController.js';
 import type {
 	BranchAndTargetRefs,
 	BranchRef,
-	CollapseSectionParams,
 	CreatePullRequestCommandArgs,
 	DidChangeRepositoriesParams,
 	GetActiveOverviewResponse,
 	GetInactiveOverviewResponse,
 	GetOverviewBranch,
 	IntegrationState,
-	OpenInGraphParams,
 	OpenInTimelineParams,
 	OpenWorktreeCommandArgs,
 	OverviewFilters,
@@ -100,13 +119,15 @@ import type {
 	OverviewRepository,
 	OverviewStaleThreshold,
 	State,
-} from './protocol';
+	SubscriptionState,
+} from './protocol.js';
 import {
 	ChangeOverviewRepositoryCommand,
 	CollapseSectionCommand,
 	DidChangeAiAllAccessBanner,
 	DidChangeIntegrationsConnections,
 	DidChangeLaunchpad,
+	DidChangeMcpBanner,
 	DidChangeOrgSettings,
 	DidChangeOverviewFilter,
 	DidChangeOverviewRepository,
@@ -126,8 +147,8 @@ import {
 	OpenInGraphCommand,
 	SetOverviewFilter,
 	TogglePreviewEnabledCommand,
-} from './protocol';
-import type { HomeWebviewShowingArgs } from './registration';
+} from './protocol.js';
+import type { HomeWebviewShowingArgs } from './registration.js';
 
 const emptyDisposable: Disposable = Object.freeze({ dispose: () => {} });
 
@@ -152,6 +173,8 @@ const thresholdValues: Record<OverviewStaleThreshold | OverviewRecentThreshold, 
 	OneYear: 1000 * 60 * 60 * 24 * 365,
 };
 
+const { command, getCommands } = createCommandDecorator<GlWebviewCommandsOrCommandsWithSuffix<'home'>>();
+
 export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWebviewShowingArgs> {
 	private readonly _disposable: Disposable;
 	private _discovering: Promise<number | undefined> | undefined;
@@ -173,10 +196,12 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 			this.container.subscription.onDidChange(this.onSubscriptionChanged, this),
 			onDidChangeContext(this.onContextChanged, this),
 			this.container.integrations.onDidChange(this.onIntegrationsChanged, this),
-			this.container.walkthrough?.onDidChangeProgress(this.onWalkthroughProgressChanged, this) ?? emptyDisposable,
+			this.container.integrations.onDidChangeConnectionState(this.onIntegrationConnectionStateChanged, this),
+			this.container.walkthrough.onDidChangeProgress(this.onWalkthroughProgressChanged, this),
 			configuration.onDidChange(this.onDidChangeConfig, this),
 			this.container.launchpad.onDidChange(this.onLaunchpadChanged, this),
 			this.container.ai.onDidChangeModel(this.onAIModelChanged, this),
+			this.container.storage.onDidChange(this.onStorageChanged, this),
 		);
 	}
 
@@ -237,24 +262,41 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		void this.notifyDidChangeIntegrations();
 	}
 
+	private onStorageChanged(e: StorageChangeEvent) {
+		if (e.type === 'global' && e.keys.includes('mcp:banner:dismissed')) {
+			this.onMcpBannerChanged();
+		}
+	}
+
 	private onIntegrationsChanged(_e: ConfiguredIntegrationsChangeEvent) {
+		void this.notifyDidChangeIntegrations();
+	}
+
+	private onIntegrationConnectionStateChanged(_e: ConnectionStateChangeEvent) {
 		void this.notifyDidChangeIntegrations();
 	}
 
 	private async onChooseRepository() {
 		const currentRepo = this.getSelectedRepository();
-		// Ensure that the current repository is always last
-		const repositories = this.container.git.openRepositories.sort(
-			(a, b) =>
-				(a === currentRepo ? 1 : -1) - (b === currentRepo ? 1 : -1) ||
-				(a.starred ? -1 : 1) - (b.starred ? -1 : 1) ||
-				a.index - b.index,
-		);
+		// // Ensure that the current repository is always last
+		// const repositories = this.container.git.openRepositories.sort(
+		// 	(a, b) =>
+		// 		(a === currentRepo ? 1 : -1) - (b === currentRepo ? 1 : -1) ||
+		// 		(a.starred ? -1 : 1) - (b.starred ? -1 : 1) ||
+		// 		a.index - b.index,
+		// );
 
+		const { title, placeholder } = getRepositoryPickerTitleAndPlaceholder(
+			this.container.git.openRepositories,
+			'Switch',
+			currentRepo?.name,
+		);
 		const pick = await showRepositoryPicker(
-			`Switch Repository ${GlyphChars.Dot} ${currentRepo?.name}`,
-			'Choose a repository to switch to',
-			repositories,
+			this.container,
+			title,
+			placeholder,
+			this.container.git.openRepositories,
+			{ picked: currentRepo },
 		);
 
 		if (pick == null || pick === currentRepo) return;
@@ -273,7 +315,14 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 	}
 
 	private onDidChangeConfig(e?: ConfigurationChangeEvent) {
-		if (configuration.changed(e, ['home.preview.enabled', 'ai.enabled'])) {
+		if (
+			configuration.changed(e, [
+				'home.preview.enabled',
+				'ai.enabled',
+				'ai.experimental.composer.enabled',
+				'defaultDateFormat',
+			])
+		) {
 			this.notifyDidChangeConfig();
 		}
 	}
@@ -282,17 +331,16 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		this.notifyDidChangeLaunchpad();
 	}
 
-	private async push(force = false) {
+	@command('gitlens.push:')
+	private async push(options?: { force?: boolean }) {
 		const repo = this.getSelectedRepository();
-		if (repo) {
-			return executeGitCommand({
-				command: 'push',
-				state: { repos: [repo], flags: force ? ['--force'] : undefined },
-			});
-		}
-		return Promise.resolve();
+		return executeGitCommand({
+			command: 'push',
+			state: { repos: repo ? [repo] : undefined, flags: options?.force ? ['--force'] : undefined },
+		});
 	}
 
+	@command('gitlens.publishBranch:')
 	private async publishBranch(ref: BranchRef) {
 		const { repo, branch } = await this.getRepoInfoFromRef(ref);
 		if (branch == null) return;
@@ -300,131 +348,90 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		return RepoActions.push(repo, undefined, getReferenceFromBranch(branch));
 	}
 
+	@command('gitlens.pull:')
 	private async pull() {
 		const repo = this.getSelectedRepository();
-		if (repo) {
-			return executeGitCommand({
-				command: 'pull',
-				state: { repos: [repo] },
-			});
-		}
-		return Promise.resolve();
+		return executeGitCommand({ command: 'pull', state: { repos: repo ? [repo] : undefined } });
 	}
 
 	registerCommands(): Disposable[] {
-		return [
-			registerCommand(`${this.host.id}.pull`, this.pull, this),
-			registerCommand(
-				`${this.host.id}.push`,
-				args => {
-					void this.push(args.force);
-				},
-				this,
-			),
-			registerCommand(`${this.host.id}.publishBranch`, this.publishBranch, this),
-			registerCommand(`${this.host.id}.refresh`, () => this.host.refresh(true), this),
-			registerCommand(`${this.host.id}.disablePreview`, () => this.onTogglePreviewEnabled(false), this),
-			registerCommand(`${this.host.id}.enablePreview`, () => this.onTogglePreviewEnabled(true), this),
-			registerCommand(
-				`${this.host.id}.previewFeedback`,
-				() => openUrl('https://github.com/gitkraken/vscode-gitlens/discussions/3721'),
-				this,
-			),
-			registerCommand(`${this.host.id}.whatsNew`, () => openUrl(urls.releaseNotes), this),
-			registerCommand(`${this.host.id}.help`, () => openUrl(urls.helpCenter), this),
-			registerCommand(`${this.host.id}.issues`, () => openUrl(urls.githubIssues), this),
-			registerCommand(`${this.host.id}.info`, () => openUrl(urls.helpCenterHome), this),
-			registerCommand(`${this.host.id}.discussions`, () => openUrl(urls.githubDiscussions), this),
-			registerCommand(
-				`${this.host.id}.account.resync`,
-				(src?: Source) => this.container.subscription.validate({ force: true }, src),
-				this,
-			),
+		const commands: Disposable[] = [];
 
-			registerCommand(
-				`${this.host.id}.ai.allAccess.dismiss`,
-				() => {
-					void this.dismissAiAllAccessBanner();
-				},
-				this,
-			),
-			registerCommand('gitlens.home.changeBranchMergeTarget', this.changeBranchMergeTarget, this),
-			registerCommand('gitlens.home.deleteBranchOrWorktree', this.deleteBranchOrWorktree, this),
-			registerCommand('gitlens.home.pushBranch', this.pushBranch, this),
-			registerCommand('gitlens.home.openMergeTargetComparison', this.mergeTargetCompare, this),
-			registerCommand('gitlens.home.openPullRequestChanges', this.pullRequestChanges, this),
-			registerCommand('gitlens.home.openPullRequestComparison', this.pullRequestCompare, this),
-			registerCommand('gitlens.home.openPullRequestOnRemote', this.pullRequestViewOnRemote, this),
-			registerCommand('gitlens.home.openPullRequestDetails', this.pullRequestDetails, this),
-			registerCommand('gitlens.home.createPullRequest', this.pullRequestCreate, this),
-			registerCommand('gitlens.home.openWorktree', this.worktreeOpen, this),
-			registerCommand('gitlens.home.switchToBranch', this.switchToBranch, this),
-			registerCommand('gitlens.home.fetch', this.fetch, this),
-			registerCommand('gitlens.home.openInGraph', this.openInGraph, this),
-			registerCommand('gitlens.visualizeHistory.repo:home', this.openInTimeline, this),
-			registerCommand('gitlens.visualizeHistory.branch:home', this.openInTimeline, this),
-			registerCommand('gitlens.home.createBranch', this.createBranch, this),
-			registerCommand('gitlens.home.mergeIntoCurrent', this.mergeIntoCurrent, this),
-			registerCommand('gitlens.home.rebaseCurrentOnto', this.rebaseCurrentOnto, this),
-			registerCommand('gitlens.home.startWork', this.startWork, this),
-			registerCommand('gitlens.home.createCloudPatch', this.createCloudPatch, this),
-			registerCommand('gitlens.home.skipPausedOperation', this.skipPausedOperation, this),
-			registerCommand('gitlens.home.continuePausedOperation', this.continuePausedOperation, this),
-			registerCommand('gitlens.home.abortPausedOperation', this.abortPausedOperation, this),
-			registerCommand('gitlens.home.openRebaseEditor', this.openRebaseEditor, this),
-			registerCommand('gitlens.home.enableAi', this.enableAi, this),
-			registerCommand('gitlens.ai.explainWip:home', this.explainWip, this),
-			registerCommand('gitlens.ai.explainBranch:home', this.explainBranch, this),
-			registerCommand('gitlens.ai.generateCommits:home', this.generateCommits, this),
-		];
+		if (this.host.is('view')) {
+			commands.push(
+				registerCommand(`${this.host.id}.refresh`, () => this.host.refresh(true), this),
+				registerCommand(`${this.host.id}.disablePreview`, () => this.onTogglePreviewEnabled(false), this),
+				registerCommand(`${this.host.id}.enablePreview`, () => this.onTogglePreviewEnabled(true), this),
+				registerCommand(
+					`${this.host.id}.previewFeedback`,
+					() => openUrl('https://github.com/gitkraken/vscode-gitlens/discussions/3721'),
+					this,
+				),
+				registerCommand(`${this.host.id}.whatsNew`, () => openUrl(urls.releaseNotes), this),
+				registerCommand(`${this.host.id}.help`, () => openUrl(urls.helpCenter), this),
+				registerCommand(`${this.host.id}.issues`, () => openUrl(urls.githubIssues), this),
+				registerCommand(`${this.host.id}.info`, () => openUrl(urls.helpCenterHome), this),
+				registerCommand(`${this.host.id}.discussions`, () => openUrl(urls.githubDiscussions), this),
+			);
+		}
+
+		// Register commands from @command decorators
+		for (const { command, handler } of getCommands()) {
+			const modified = (...args: any[]) => {
+				const [arg] = args;
+				if (isWebviewContext(arg)) {
+					const { webview: _webview, webviewInstance: _webviewInstance, ...rest } = arg;
+					if (hasKeys(rest)) {
+						args.splice(0, 1, rest);
+					} else {
+						args.length = 0;
+					}
+				}
+
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-return
+				return handler.call(this, ...args);
+			};
+
+			commands.push(registerWebviewCommand(getWebviewCommand(command, this.host.type), modified, this));
+		}
+
+		return commands;
 	}
 
-	private setOverviewFilter(value: OverviewFilters) {
-		this._overviewBranchFilter = value;
+	@ipcCommand(SetOverviewFilter)
+	private onSetOverviewFilter(params: IpcParams<typeof SetOverviewFilter>) {
+		this._overviewBranchFilter = params;
 		void this.host.notify(DidChangeOverviewFilter, { filter: this._overviewBranchFilter });
 	}
 
-	async onMessageReceived(e: IpcMessage): Promise<void> {
-		switch (true) {
-			case CollapseSectionCommand.is(e):
-				this.onCollapseSection(e.params);
-				break;
-			case DismissWalkthroughSection.is(e):
-				this.dismissWalkthrough();
-				break;
-
-			case DismissAiAllAccessBannerCommand.is(e):
-				void this.dismissAiAllAccessBanner();
-				break;
-			case SetOverviewFilter.is(e):
-				this.setOverviewFilter(e.params);
-				break;
-			case GetLaunchpadSummary.is(e):
-				void this.host.respond(GetLaunchpadSummary, e, await getLaunchpadSummary(this.container));
-				break;
-			case GetOverviewFilterState.is(e):
-				void this.host.respond(GetOverviewFilterState, e, this._overviewBranchFilter);
-				break;
-			case ChangeOverviewRepositoryCommand.is(e):
-				if ((await this.onChooseRepository()) == null) return;
-				void this.host.notify(DidChangeOverviewRepository, undefined);
-				break;
-			case TogglePreviewEnabledCommand.is(e):
-				this.onTogglePreviewEnabled();
-				break;
-			case OpenInGraphCommand.is(e):
-				this.openInGraph(e.params);
-				break;
-			case GetActiveOverview.is(e):
-				void this.host.respond(GetActiveOverview, e, await this.getActiveBranchOverview());
-				break;
-			case GetInactiveOverview.is(e):
-				void this.host.respond(GetInactiveOverview, e, await this.getInactiveBranchOverview());
-				break;
-		}
+	@ipcRequest(GetLaunchpadSummary)
+	private async onGetLaunchpadSummary(): Promise<IpcResponse<typeof GetLaunchpadSummary>> {
+		return getLaunchpadSummary(this.container);
 	}
 
-	includeBootstrap(): Promise<State> {
+	@ipcRequest(GetOverviewFilterState)
+	private onGetOverviewFilterState(): IpcResponse<typeof GetOverviewFilterState> {
+		return this._overviewBranchFilter;
+	}
+
+	@ipcCommand(ChangeOverviewRepositoryCommand)
+	private async onChangeOverviewRepository() {
+		if ((await this.onChooseRepository()) == null) return;
+
+		void this.host.notify(DidChangeOverviewRepository, undefined);
+	}
+
+	@ipcRequest(GetActiveOverview)
+	private onGetActiveOverview(): Promise<IpcResponse<typeof GetActiveOverview>> {
+		return this.getActiveBranchOverview();
+	}
+
+	@ipcRequest(GetInactiveOverview)
+	private onGetInactiveOverview(): Promise<IpcResponse<typeof GetInactiveOverview>> {
+		return this.getInactiveBranchOverview();
+	}
+
+	includeBootstrap(_deferrable?: boolean): Promise<State> {
 		return this.getState();
 	}
 
@@ -478,10 +485,12 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		}
 	}
 
-	@log<HomeWebviewProvider['openInGraph']>({
-		args: { 0: p => `${p?.type}, repoPath=${p?.repoPath}, branchId=${p?.branchId}` },
+	@ipcCommand(OpenInGraphCommand)
+	@command('gitlens.showInCommitGraph:')
+	@debug({
+		args: params => ({ params: `${params?.type}, repoPath=${params?.repoPath}, branchId=${params?.branchId}` }),
 	})
-	private openInGraph(params: OpenInGraphParams) {
+	private showInCommitGraph(params: IpcParams<typeof OpenInGraphCommand>) {
 		const repoInfo = params != null ? this._repositoryBranches.get(params.repoPath) : undefined;
 		if (repoInfo == null) {
 			void executeCommand('gitlens.showGraph', this.getSelectedRepository());
@@ -493,6 +502,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 			if (branch != null) {
 				void executeCommand<ShowInCommitGraphCommandArgs>('gitlens.showInCommitGraph', {
 					ref: getReferenceFromBranch(branch),
+					source: { source: 'home' },
 				});
 				return;
 			}
@@ -501,8 +511,10 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		void executeCommand('gitlens.showGraph', repoInfo.repo);
 	}
 
-	@log<HomeWebviewProvider['openInTimeline']>({
-		args: { 0: p => `${p?.type}, repoPath=${p?.repoPath}, branchId=${p?.branchId}` },
+	@command('gitlens.visualizeHistory.branch:')
+	@command('gitlens.visualizeHistory.repo:')
+	@debug({
+		args: params => ({ params: `${params?.type}, repoPath=${params?.repoPath}, branchId=${params?.branchId}` }),
 	})
 	private openInTimeline(params: OpenInTimelineParams) {
 		const repo = params == null ? this.getSelectedRepository() : this.container.git.getRepository(params.repoPath);
@@ -527,35 +539,54 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		}
 	}
 
-	@log()
+	@command('gitlens.openInView.branch:')
+	@debug({
+		args: params => ({ params: `repoPath=${params?.repoPath}, branchId=${params?.branchId}` }),
+	})
+	private async openInView(params: BranchRef) {
+		const { repo, branch } = await this.getRepoInfoFromRef(params);
+		if (repo == null || branch == null) return;
+
+		// Show in the Worktrees or Branches view depending
+		const worktree = await branch.getWorktree();
+		if (worktree != null && !worktree.isDefault) {
+			await revealWorktree(worktree, { select: true, focus: true, expand: true });
+		} else {
+			await revealBranch(branch, { select: true, focus: true, expand: true });
+		}
+	}
+
+	@command('gitlens.createBranch:')
+	@debug()
 	private createBranch() {
 		this.container.telemetry.sendEvent('home/createBranch');
 		void executeCommand<BranchGitCommandArgs>('gitlens.gitCommands', {
 			command: 'branch',
 			state: {
 				subcommand: 'create',
-				repo: this.getSelectedRepository(), // TODO: Needs to move to be an arg
-				suggestNameOnly: true,
-				suggestRepoOnly: true,
+				suggestedRepo: this.getSelectedRepository(),
 				confirmOptions: ['--switch', '--worktree'],
 			},
 		});
 	}
 
-	@log<HomeWebviewProvider['changeBranchMergeTarget']>()
+	@command('gitlens.git.branch.setMergeTarget:')
+	@debug()
 	private changeBranchMergeTarget(ref: BranchAndTargetRefs) {
 		this.container.telemetry.sendEvent('home/changeBranchMergeTarget');
-		void executeCommand<ChangeBranchMergeTargetCommandArgs>('gitlens.changeBranchMergeTarget', {
-			command: 'changeBranchMergeTarget',
+		void executeCommand<BranchGitCommandArgs>('gitlens.git.branch.setMergeTarget', {
+			command: 'branch',
 			state: {
+				subcommand: 'mergeTarget',
 				repo: ref.repoPath,
-				branch: ref.branchName,
-				mergeBranch: ref.mergeTargetName,
+				reference: ref.branchName,
+				suggestedMergeTarget: ref.mergeTargetName,
 			},
 		});
 	}
 
-	@log<HomeWebviewProvider['mergeIntoCurrent']>({ args: { 0: r => r.branchId } })
+	@command('gitlens.mergeIntoCurrent:')
+	@debug({ args: ref => ({ ref: ref.branchId }) })
 	private async mergeIntoCurrent(ref: BranchRef) {
 		const { repo, branch } = await this.getRepoInfoFromRef(ref);
 		if (branch == null) return;
@@ -563,7 +594,8 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		void RepoActions.merge(repo, getReferenceFromBranch(branch));
 	}
 
-	@log<HomeWebviewProvider['rebaseCurrentOnto']>({ args: { 0: r => r.branchId } })
+	@command('gitlens.rebaseCurrentOnto:')
+	@debug({ args: ref => ({ ref: ref.branchId }) })
 	private async rebaseCurrentOnto(ref: BranchRef) {
 		const { repo, branch } = await this.getRepoInfoFromRef(ref);
 		if (branch == null) return;
@@ -571,7 +603,8 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		void RepoActions.rebase(repo, getReferenceFromBranch(branch));
 	}
 
-	@log<HomeWebviewProvider['explainBranch']>({ args: { 0: r => r.branchId } })
+	@command('gitlens.ai.explainBranch:')
+	@debug({ args: ref => ({ ref: ref.branchId }) })
 	private async explainBranch(ref: BranchRef) {
 		const { repo, branch } = await this.getRepoInfoFromRef(ref);
 		if (repo == null) return;
@@ -579,11 +612,12 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		void executeCommand<ExplainBranchCommandArgs>('gitlens.ai.explainBranch', {
 			repoPath: repo.path,
 			ref: branch?.ref,
-			source: { source: 'home', type: 'branch' },
+			source: { source: 'home', context: { type: 'branch' } },
 		});
 	}
 
-	@log<HomeWebviewProvider['explainWip']>({ args: { 0: r => r.branchId } })
+	@command('gitlens.ai.explainWip:')
+	@debug({ args: ref => ({ ref: ref.branchId }) })
 	private async explainWip(ref: BranchRef) {
 		const { repo, branch } = await this.getRepoInfoFromRef(ref);
 		if (repo == null) return;
@@ -593,28 +627,24 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		void executeCommand<ExplainWipCommandArgs>('gitlens.ai.explainWip', {
 			repoPath: repo.path,
 			worktreePath: worktree?.path,
-			source: { source: 'home', type: 'wip' },
+			source: { source: 'home', context: { type: 'wip' } },
 		});
 	}
 
-	@log<HomeWebviewProvider['generateCommits']>({ args: { 0: r => r.branchId } })
-	private async generateCommits(ref: BranchRef) {
+	@command('gitlens.composeCommits:')
+	@debug({ args: ref => ({ ref: ref.branchId }) })
+	private async composeCommits(ref: BranchRef) {
 		const { repo } = await this.getRepoInfoFromRef(ref);
 		if (repo == null) return;
 
-		void executeCommand<GenerateCommitsCommandArgs>('gitlens.ai.generateCommits', {
+		void executeCommand<ComposerCommandArgs>('gitlens.composeCommits', {
 			repoPath: repo.path,
-			source: { source: 'home' },
+			source: 'home',
 		});
 	}
 
-	@log()
-	private enableAi() {
-		this.container.telemetry.sendEvent('home/enableAi');
-		configuration.updateEffective('ai.enabled', true);
-	}
-
-	@log()
+	@command('gitlens.startWork:')
+	@debug()
 	private startWork() {
 		this.container.telemetry.sendEvent('home/startWork');
 		void executeCommand<StartWorkCommandArgs>('gitlens.startWork', {
@@ -623,24 +653,28 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		});
 	}
 
-	@log<HomeWebviewProvider['abortPausedOperation']>({ args: { 0: op => op.type } })
+	@command('gitlens.pausedOperation.abort:')
+	@debug({ args: pausedOpArgs => ({ pausedOpArgs: pausedOpArgs.type }) })
 	private async abortPausedOperation(pausedOpArgs: GitPausedOperationStatus) {
 		await abortPausedOperation(this.container.git.getRepositoryService(pausedOpArgs.repoPath));
 	}
 
-	@log<HomeWebviewProvider['continuePausedOperation']>({ args: { 0: op => op.type } })
+	@command('gitlens.pausedOperation.continue:')
+	@debug({ args: pausedOpArgs => ({ pausedOpArgs: pausedOpArgs.type }) })
 	private async continuePausedOperation(pausedOpArgs: GitPausedOperationStatus) {
 		if (pausedOpArgs.type === 'revert') return;
 
 		await continuePausedOperation(this.container.git.getRepositoryService(pausedOpArgs.repoPath));
 	}
 
-	@log<HomeWebviewProvider['skipPausedOperation']>({ args: { 0: op => op.type } })
+	@command('gitlens.pausedOperation.skip:')
+	@debug({ args: pausedOpArgs => ({ pausedOpArgs: pausedOpArgs.type }) })
 	private async skipPausedOperation(pausedOpArgs: GitPausedOperationStatus) {
 		await skipPausedOperation(this.container.git.getRepositoryService(pausedOpArgs.repoPath));
 	}
 
-	@log<HomeWebviewProvider['openRebaseEditor']>({ args: { 0: op => op.type } })
+	@command('gitlens.pausedOperation.open:')
+	@debug({ args: pausedOpArgs => ({ pausedOpArgs: pausedOpArgs.type }) })
 	private async openRebaseEditor(pausedOpArgs: GitPausedOperationStatus) {
 		if (pausedOpArgs.type !== 'rebase') return;
 
@@ -653,7 +687,14 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		});
 	}
 
-	@log<HomeWebviewProvider['createCloudPatch']>({ args: { 0: r => r.branchId } })
+	@command('gitlens.pausedOperation.showConflicts:')
+	@debug({ args: pausedOpArgs => ({ pausedOpArgs: pausedOpArgs.type }) })
+	private async showConflicts(pausedOpArgs: GitPausedOperationStatus) {
+		await showPausedOperationStatus(this.container, pausedOpArgs.repoPath, { openRebaseEditor: true });
+	}
+
+	@command('gitlens.createCloudPatch:')
+	@debug({ args: ref => ({ ref: ref.branchId }) })
 	private async createCloudPatch(ref: BranchRef) {
 		const { repo } = await this.getRepoInfoFromRef(ref);
 		if (repo == null) return;
@@ -694,23 +735,18 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		void showPatchesView({ mode: 'create', create: { changes: [change] } });
 	}
 
+	@ipcCommand(TogglePreviewEnabledCommand)
 	private onTogglePreviewEnabled(isEnabled?: boolean) {
 		if (isEnabled === undefined) {
 			isEnabled = !this.getPreviewEnabled();
-		}
-
-		if (!this.getPreviewCollapsed()) {
-			this.onCollapseSection({
-				section: 'newHomePreview',
-				collapsed: true,
-			});
 		}
 
 		this.container.telemetry.sendEvent('home/preview/toggled', { enabled: isEnabled, version: 'v16' });
 		configuration.updateEffective('home.preview.enabled', isEnabled);
 	}
 
-	private onCollapseSection(params: CollapseSectionParams) {
+	@ipcCommand(CollapseSectionCommand)
+	private onCollapseSection(params: IpcParams<typeof CollapseSectionCommand>) {
 		const collapsed = this.container.storage.get('home:sections:collapsed');
 		if (collapsed == null) {
 			if (params.collapsed === true) {
@@ -734,7 +770,8 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		}
 	}
 
-	@log()
+	@ipcCommand(DismissWalkthroughSection)
+	@debug()
 	private dismissWalkthrough() {
 		const dismissed = this.container.storage.get('home:walkthrough:dismissed');
 		if (!dismissed) {
@@ -744,23 +781,29 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 	}
 
 	private getWalkthroughDismissed() {
-		return (
-			this.container.walkthrough == null || (this.container.storage.get('home:walkthrough:dismissed') ?? false)
-		);
-	}
-
-	private getPreviewCollapsed() {
-		return this.container.storage.get('home:sections:collapsed')?.includes('newHomePreview') ?? false;
+		return this.container.storage.get('home:walkthrough:dismissed') ?? false;
 	}
 
 	private getAiEnabled() {
-		return configuration.get('ai.enabled');
+		return this.container.ai.enabled;
+	}
+
+	private getExperimentalComposerEnabled() {
+		return configuration.get('ai.experimental.composer.enabled', undefined, false);
 	}
 
 	private getAmaBannerCollapsed() {
 		if (Date.now() >= new Date('2025-02-13T13:00:00-05:00').getTime()) return true;
 
 		return this.container.storage.get('home:sections:collapsed')?.includes('feb2025AmaBanner') ?? false;
+	}
+
+	private getMcpBannerCollapsed() {
+		return !isMcpBannerEnabled(this.container, true);
+	}
+
+	private getMcpCanAutoRegister() {
+		return mcpRegistrationAllowed(this.container);
 	}
 
 	private getIntegrationBannerCollapsed() {
@@ -779,7 +822,8 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		return subscription.account?.id ?? '00000000';
 	}
 
-	@log()
+	@ipcCommand(DismissAiAllAccessBannerCommand)
+	@debug()
 	private async dismissAiAllAccessBanner() {
 		this.container.telemetry.sendEvent('aiAllAccess/bannerDismissed', undefined, { source: 'home' });
 		const userId = await this.getAiAllAccessUserId();
@@ -801,7 +845,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		}
 	}
 
-	@debug({ args: false })
+	@trace({ args: false })
 	private async onSubscriptionChanged(e: SubscriptionChangeEvent) {
 		if (e.etag === this._etagSubscription) return;
 
@@ -817,15 +861,34 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 	}
 
 	private async getState(subscription?: Subscription): Promise<State> {
-		const [subResult, integrationResult, aiModelResult, aiAllAccessBannerCollapsed] = await Promise.allSettled([
-			this.getSubscriptionState(subscription),
-			this.getIntegrationStates(true),
-			this.container.ai.getModel({ silent: true }, { source: 'home' }),
-			this.getAiAllAccessBannerCollapsed(),
-		]);
+		const [subscriptionResult, integrationResult, aiModelResult, aiAllAccessBannerCollapsed] =
+			await Promise.allSettled([
+				this.getSubscriptionState(subscription),
+				this.getIntegrationStates(true),
+				this.container.ai.getModel({ silent: true }, { source: 'home' }),
+				this.getAiAllAccessBannerCollapsed(),
+			]);
 
-		if (subResult.status === 'rejected') {
-			throw subResult.reason;
+		// Handle subscription rejection gracefully by falling back to community subscription
+		let subscriptionState: SubscriptionState;
+		if (subscriptionResult.status === 'fulfilled') {
+			subscriptionState = subscriptionResult.value;
+		} else {
+			using scope = maybeStartScopedLogger(
+				`${getLoggableName(this)}.getState(${Logger.toLoggable(subscription)})`,
+			);
+			scope?.error(subscriptionResult.reason, 'Failed to get subscription state');
+
+			this.container.telemetry.sendEvent('home/failed', {
+				reason: 'subscription',
+				error: String(subscriptionResult.reason),
+			});
+
+			subscriptionState = {
+				subscription: getCommunitySubscription(),
+				avatar: `${this.host.getWebRoot() ?? ''}/media/gitlens-logo.webp`,
+				organizationsCount: 0,
+			};
 		}
 
 		const integrations = getSettledValue(integrationResult) ?? [];
@@ -837,29 +900,26 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 			discovering: this._discovering != null,
 			repositories: this.getRepositoriesState(),
 			webroot: this.host.getWebRoot(),
-			subscription: subResult.value.subscription,
-			avatar: subResult.value.avatar,
-			organizationsCount: subResult.value.organizationsCount,
+			subscription: subscriptionState.subscription,
+			avatar: subscriptionState.avatar,
+			organizationsCount: subscriptionState.organizationsCount,
 			orgSettings: this.getOrgSettings(),
 			aiEnabled: this.getAiEnabled(),
-			previewCollapsed: this.getPreviewCollapsed(),
+			experimentalComposerEnabled: this.getExperimentalComposerEnabled(),
 			integrationBannerCollapsed: this.getIntegrationBannerCollapsed(),
 			aiAllAccessBannerCollapsed: getSettledValue(aiAllAccessBannerCollapsed, false),
 			integrations: integrations,
 			ai: ai,
 			hasAnyIntegrationConnected: anyConnected,
-			walkthroughSupported: this.container.walkthrough != null,
-			walkthroughProgress:
-				!this.getWalkthroughDismissed() && this.container.walkthrough != null
-					? {
-							allCount: this.container.walkthrough.walkthroughSize,
-							doneCount: this.container.walkthrough.doneCount,
-							progress: this.container.walkthrough.progress,
-						}
-					: undefined,
+			walkthroughSupported: this.container.walkthrough.isWalkthroughSupported,
+			walkthroughProgress: this.getWalkthroughProgress(),
+			dateFormat: configuration.get('defaultDateFormat'),
 			previewEnabled: this.getPreviewEnabled(),
-			newInstall: getContext('gitlens:install:new', false),
+			newInstall: !configuration.get('advanced.skipOnboarding') && getContext('gitlens:install:new', false),
 			amaBannerCollapsed: this.getAmaBannerCollapsed(),
+			mcpBannerCollapsed: this.getMcpBannerCollapsed(),
+			mcpCanAutoRegister: this.getMcpCanAutoRegister(),
+			hostAppName: env.appName,
 		};
 	}
 
@@ -942,6 +1002,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		const recentBranches = branches.filter(
 			branch => this.getBranchOverviewType(branch, worktreesByBranch) === 'recent',
 		);
+		recentBranches.sort((a, b) => (b.effectiveDate?.getTime() ?? 0) - (a.effectiveDate?.getTime() ?? 0));
 		const isPro = getSettledValue(proSubscriptionResult)!;
 
 		let staleBranches: GitBranch[] | undefined;
@@ -1003,10 +1064,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		if (repoPath != null) {
 			repo = this.container.git.getRepository(repoPath)!;
 		} else {
-			repo = this.container.git.highlander;
-			if (repo == null) {
-				repo = this.container.git.getBestRepositoryOrFirst();
-			}
+			repo = this.container.git.getBestRepositoryOrFirst();
 		}
 
 		this._repositorySubscription?.dispose();
@@ -1042,14 +1100,16 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 			repo.onDidChange(e => {
 				if (
 					e.changed(
-						RepositoryChange.Config,
-						RepositoryChange.Head,
-						RepositoryChange.Heads,
-						// RepositoryChange.Index,
-						RepositoryChange.Remotes,
-						RepositoryChange.PausedOperationStatus,
-						RepositoryChange.Unknown,
-						RepositoryChangeComparisonMode.Any,
+						'config',
+						'gkConfig',
+						'head',
+						'heads',
+						// 'index',
+						'remotes',
+						'pausedOp',
+						'starred',
+						'worktrees',
+						'unknown',
 					)
 				) {
 					this.onOverviewRepoChanged(repo);
@@ -1058,7 +1118,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		);
 	}
 
-	@debug({ args: { 0: false } })
+	@trace({ args: (_e, repository) => ({ repository: repository.id }) })
 	private onOverviewWipChanged(e: RepositoryFileSystemChangeEvent, repository: Repository) {
 		if (e.repository.id !== repository.id) return;
 		if (this._etagFileSystem === repository.etagFileSystem) return;
@@ -1073,7 +1133,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		void this.host.notify(DidChangeRepositoryWip, undefined);
 	}
 
-	@debug()
+	@trace()
 	private onOverviewRepoChanged(repo?: Repository) {
 		if (repo != null) {
 			if (this._etagRepository === repo.etag) {
@@ -1094,6 +1154,15 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		if (!this.host.visible) return;
 
 		void this.host.notify(DidChangeAiAllAccessBanner, await this.getAiAllAccessBannerCollapsed());
+	}
+
+	private onMcpBannerChanged() {
+		if (!this.host.visible) return;
+
+		void this.host.notify(DidChangeMcpBanner, {
+			mcpBannerCollapsed: this.getMcpBannerCollapsed(),
+			mcpCanAutoRegister: this.getMcpCanAutoRegister(),
+		});
 	}
 
 	private getSelectedRepository() {
@@ -1159,6 +1228,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 				} satisfies IntegrationState;
 			});
 
+			// eslint-disable-next-line @typescript-eslint/await-thenable
 			const integrationsResults = await Promise.allSettled(promises);
 			const integrations: IntegrationState[] = [...filterMap(integrationsResults, r => getSettledValue(r))];
 
@@ -1209,7 +1279,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		return isSubscriptionTrialOrPaidFromState(subscription.state);
 	}
 
-	private async getSubscriptionState(subscription?: Subscription) {
+	private async getSubscriptionState(subscription?: Subscription): Promise<SubscriptionState> {
 		subscription = await this.getSubscription(subscription);
 		this._etagSubscription = this.container.subscription.etag;
 
@@ -1247,28 +1317,38 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 			return;
 		}
 
-		if (this._notifyDidChangeRepositoriesDebounced == null) {
-			this._notifyDidChangeRepositoriesDebounced = debounce(this.notifyDidChangeRepositoriesCore.bind(this), 500);
-		}
+		this._notifyDidChangeRepositoriesDebounced ??= debounce(this.notifyDidChangeRepositoriesCore.bind(this), 500);
 
 		this._notifyDidChangeRepositoriesDebounced();
 	}
 
-	private notifyDidChangeProgress() {
-		if (this.container.walkthrough == null) return;
+	private getWalkthroughProgress(): State['walkthroughProgress'] {
+		if (this.getWalkthroughDismissed()) return undefined;
 
-		void this.host.notify(DidChangeWalkthroughProgress, {
+		const walkthroughState = this.container.walkthrough.getState();
+		const state: Record<string, boolean> = Object.fromEntries(walkthroughState);
+
+		return {
 			allCount: this.container.walkthrough.walkthroughSize,
 			doneCount: this.container.walkthrough.doneCount,
 			progress: this.container.walkthrough.progress,
-		});
+			state: state as Record<WalkthroughContextKeys, boolean>,
+		};
+	}
+
+	private notifyDidChangeProgress() {
+		const state = this.getWalkthroughProgress();
+		if (state == null) return;
+
+		void this.host.notify(DidChangeWalkthroughProgress, state);
 	}
 
 	private notifyDidChangeConfig() {
 		void this.host.notify(DidChangePreviewEnabled, {
 			previewEnabled: this.getPreviewEnabled(),
-			previewCollapsed: this.getPreviewCollapsed(),
 			aiEnabled: this.getAiEnabled(),
+			experimentalComposerEnabled: this.getExperimentalComposerEnabled(),
+			dateFormat: configuration.get('defaultDateFormat'),
 		});
 	}
 
@@ -1316,8 +1396,12 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		});
 	}
 
-	@log<HomeWebviewProvider['deleteBranchOrWorktree']>({
-		args: { 0: r => `${r.branchId}, upstream: ${r.branchUpstreamName}`, 1: mt => mt?.branchId },
+	@command('gitlens.deleteBranchOrWorktree:')
+	@debug({
+		args: (ref, mergeTarget) => ({
+			ref: `${ref.branchId}, upstream: ${ref.branchUpstreamName}`,
+			mergeTarget: mergeTarget?.branchId,
+		}),
 	})
 	private async deleteBranchOrWorktree(ref: BranchRef, mergeTarget?: BranchRef) {
 		const { repo, branch } = await this.getRepoInfoFromRef(ref);
@@ -1332,10 +1416,14 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 				{ modal: true },
 				{ title: 'Continue' },
 			);
+			if (confirm?.title !== 'Continue') return;
 
-			if (confirm == null || confirm.title !== 'Continue') return;
-
-			await this.container.git.getRepositoryService(ref.repoPath).checkout(mergeTargetLocalBranchName);
+			try {
+				await this.container.git.getRepositoryService(ref.repoPath).ops?.checkout(mergeTargetLocalBranchName);
+			} catch (ex) {
+				void showGitErrorMessage(ex, `Unable to switch to branch '${mergeTargetLocalBranchName}'`);
+				return;
+			}
 
 			void executeGitCommand({
 				command: 'branch',
@@ -1346,7 +1434,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 				},
 			});
 		} else if (repo != null && worktree != null && !worktree.isDefault) {
-			const commonRepo = await repo.getCommonRepository();
+			const commonRepo = await repo.getOrOpenCommonRepository();
 			const defaultWorktree = await repo.git.worktrees?.getWorktree(w => w.isDefault);
 			if (defaultWorktree == null || commonRepo == null) return;
 
@@ -1355,8 +1443,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 				{ modal: true },
 				{ title: 'Continue' },
 			);
-
-			if (confirm == null || confirm.title !== 'Continue') return;
+			if (confirm?.title !== 'Continue') return;
 
 			const schemeOverride = configuration.get('deepLinks.schemeOverride');
 			const scheme = typeof schemeOverride === 'string' ? schemeOverride : env.uriScheme;
@@ -1394,36 +1481,49 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		}
 	}
 
-	@log<HomeWebviewProvider['pushBranch']>({
-		args: { 0: r => `${r.branchId}, upstream: ${r.branchUpstreamName}` },
+	@command('gitlens.pushBranch:')
+	@debug({
+		args: ref => ({ ref: `${ref.branchId}, upstream: ${ref.branchUpstreamName}` }),
 	})
-	private pushBranch(ref: BranchRef) {
-		void this.container.git.getRepositoryService(ref.repoPath).push({
-			reference: {
-				name: ref.branchName,
-				ref: ref.branchId,
-				refType: 'branch',
-				remote: false,
-				repoPath: ref.repoPath,
-				upstream: ref.branchUpstreamName
-					? {
-							name: ref.branchUpstreamName,
-							missing: false,
-						}
-					: undefined,
-			},
-		});
+	private async pushBranch(ref: BranchRef) {
+		try {
+			await this.container.git.getRepositoryService(ref.repoPath).ops?.push({
+				reference: {
+					name: ref.branchName,
+					ref: ref.branchId,
+					refType: 'branch',
+					remote: false,
+					repoPath: ref.repoPath,
+					upstream: ref.branchUpstreamName
+						? {
+								name: ref.branchUpstreamName,
+								missing: false,
+							}
+						: undefined,
+				},
+			});
+		} catch (ex) {
+			if (PushError.is(ex)) {
+				void showGitErrorMessage(ex);
+			} else {
+				void showGitErrorMessage(ex, 'Unable to push branch');
+			}
+		}
 	}
 
-	@log<HomeWebviewProvider['mergeTargetCompare']>({
-		args: { 0: r => `${r.branchId}, upstream: ${r.branchUpstreamName}, mergeTargetId: ${r.mergeTargetId}` },
+	@command('gitlens.openMergeTargetComparison:')
+	@debug({
+		args: ref => ({
+			ref: `${ref.branchId}, upstream: ${ref.branchUpstreamName}, mergeTargetId: ${ref.mergeTargetId}`,
+		}),
 	})
 	private mergeTargetCompare(ref: BranchAndTargetRefs) {
 		return this.container.views.searchAndCompare.compare(ref.repoPath, ref.branchName, ref.mergeTargetName);
 	}
 
-	@log<HomeWebviewProvider['pullRequestCompare']>({
-		args: { 0: r => `${r.branchId}, upstream: ${r.branchUpstreamName}` },
+	@command('gitlens.openPullRequestComparison:')
+	@debug({
+		args: ref => ({ ref: `${ref.branchId}, upstream: ${ref.branchUpstreamName}` }),
 	})
 	private async pullRequestCompare(ref: BranchRef) {
 		const pr = await this.getPullRequestFromRef(ref);
@@ -1440,8 +1540,9 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		);
 	}
 
-	@log<HomeWebviewProvider['pullRequestChanges']>({
-		args: { 0: r => `${r.branchId}, upstream: ${r.branchUpstreamName}` },
+	@command('gitlens.openPullRequestChanges:')
+	@debug({
+		args: ref => ({ ref: `${ref.branchId}, upstream: ${ref.branchUpstreamName}` }),
 	})
 	private async pullRequestChanges(ref: BranchRef) {
 		const pr = await this.getPullRequestFromRef(ref);
@@ -1462,24 +1563,26 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		);
 	}
 
-	@log<HomeWebviewProvider['pullRequestViewOnRemote']>({
-		args: { 0: r => `${r.branchId}, upstream: ${r.branchUpstreamName}` },
-	})
-	private async pullRequestViewOnRemote(ref: BranchRef, clipboard?: boolean) {
-		const pr = await this.getPullRequestFromRef(ref);
-		if (pr == null) {
-			void window.showErrorMessage('Unable to find pull request to open on remote');
-			return;
-		}
+	// @command('gitlens.openPullRequestOnRemote:')
+	// @log<HomeWebviewProvider['pullRequestViewOnRemote']>({
+	// 	args: { 0: r => `${r.branchId}, upstream: ${r.branchUpstreamName}` },
+	// })
+	// private async pullRequestViewOnRemote(ref: BranchRef, clipboard?: boolean) {
+	// 	const pr = await this.getPullRequestFromRef(ref);
+	// 	if (pr == null) {
+	// 		void window.showErrorMessage('Unable to find pull request to open on remote');
+	// 		return;
+	// 	}
 
-		void executeCommand<OpenPullRequestOnRemoteCommandArgs>('gitlens.openPullRequestOnRemote', {
-			pr: { url: pr.url },
-			clipboard: clipboard,
-		});
-	}
+	// 	void executeCommand<OpenPullRequestOnRemoteCommandArgs>('gitlens.openPullRequestOnRemote', {
+	// 		pr: { url: pr.url },
+	// 		clipboard: clipboard,
+	// 	});
+	// }
 
-	@log<HomeWebviewProvider['pullRequestDetails']>({
-		args: { 0: r => `${r.branchId}, upstream: ${r.branchUpstreamName}` },
+	@command('gitlens.openPullRequestDetails:')
+	@debug({
+		args: ref => ({ ref: `${ref.branchId}, upstream: ${ref.branchUpstreamName}` }),
 	})
 	private async pullRequestDetails(ref: BranchRef) {
 		const pr = await this.getPullRequestFromRef(ref);
@@ -1491,8 +1594,9 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		void this.container.views.pullRequest.showPullRequest(pr, ref.repoPath);
 	}
 
-	@log<HomeWebviewProvider['pullRequestCreate']>({
-		args: { 0: a => `${a.ref.branchId}, upstream: ${a.ref.branchUpstreamName}` },
+	@command('gitlens.createPullRequest:')
+	@debug({
+		args: a => ({ a: `${a.ref.branchId}, upstream: ${a.ref.branchUpstreamName}` }),
 	})
 	private async pullRequestCreate({ ref, describeWithAI, source }: CreatePullRequestCommandArgs) {
 		const { branch } = await this.getRepoInfoFromRef(ref);
@@ -1536,8 +1640,9 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		);
 	}
 
-	@log<HomeWebviewProvider['worktreeOpen']>({
-		args: { 0: r => `${r.branchId}, worktree: ${r.worktree?.name}` },
+	@command('gitlens.openWorktree:')
+	@debug({
+		args: args => ({ args: `${args.branchId}, worktree: ${args.worktree?.name}` }),
 	})
 	private async worktreeOpen(args: OpenWorktreeCommandArgs) {
 		const { location, ...ref } = args;
@@ -1548,13 +1653,15 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 		openWorkspace(worktree.uri, location ? { location: location } : undefined);
 	}
 
-	@log<HomeWebviewProvider['switchToBranch']>({ args: { 0: r => r?.branchId } })
+	@command('gitlens.switchToBranch:')
+	@debug({ args: ref => ({ ref: ref?.branchId }) })
 	private async switchToBranch(ref: BranchRef | { repoPath: string; branchName?: never; branchId?: never }) {
 		const { repo, branch } = await this.getRepoInfoFromRef(ref);
 		void RepoActions.switchTo(repo, branch ? getReferenceFromBranch(branch) : undefined);
 	}
 
-	@log<HomeWebviewProvider['fetch']>({ args: { 0: r => r?.branchId } })
+	@command('gitlens.fetch:')
+	@debug({ args: ref => ({ ref: ref?.branchId }) })
 	private async fetch(ref?: BranchRef) {
 		if (ref == null) {
 			const repo = this.getSelectedRepository();
@@ -1576,7 +1683,7 @@ export class HomeWebviewProvider implements WebviewProvider<State, State, HomeWe
 			return 'active';
 		}
 
-		const timestamp = branch.date?.getTime();
+		const timestamp = branch.effectiveDate?.getTime();
 		if (timestamp != null) {
 			const now = Date.now();
 
@@ -1649,7 +1756,14 @@ function getOverviewBranchesCore(
 
 		const wt = worktreesByBranch.get(branch.id);
 
-		const timestamp = branch.date?.getTime();
+		const timestamps =
+			branch.date != null || branch.lastAccessedDate != null || branch.lastModifiedDate != null
+				? {
+						lastCommit: branch.date?.getTime(),
+						lastAccessed: branch.lastAccessedDate?.getTime(),
+						lastModified: branch.lastModifiedDate?.getTime(),
+					}
+				: undefined;
 
 		if (isPro === true) {
 			prPromises.set(branch.id, getPullRequestInfo(container, branch, launchpadPromise));
@@ -1682,7 +1796,7 @@ function getOverviewBranchesCore(
 			id: branch.id,
 			name: branch.name,
 			opened: isActive,
-			timestamp: timestamp,
+			timestamps: timestamps,
 			status: branch.status,
 			upstream: branch.upstream,
 			worktree: wt ? { name: wt.name, uri: wt.uri.toString(), isDefault: wt.isDefault } : undefined,
@@ -1747,7 +1861,12 @@ function enrichOverviewBranchesCore(
 			issues =>
 				issues?.map(
 					i =>
-						({ id: i.id, title: i.title, state: i.state, url: i.url }) satisfies NonNullable<IssuesInfo>[0],
+						({
+							id: i.number || i.id,
+							title: i.title,
+							state: i.state,
+							url: i.url,
+						}) satisfies NonNullable<IssuesInfo>[0],
 				) ?? [],
 		);
 
@@ -1828,7 +1947,7 @@ async function getBranchMergeTargetStatusInfo(
 		svc.commits.getLeftRightCommitCount(createRevisionRange(targetBranch.name, branch.ref, '...'), {
 			excludeMerges: true,
 		}),
-		svc.branches.getPotentialMergeOrRebaseConflict?.(branch.name, targetBranch.name),
+		svc.branches.getPotentialMergeConflicts?.(branch.name, targetBranch.name),
 		svc.branches.getBranchMergedStatus?.(branch, targetBranch),
 	]);
 
@@ -1856,13 +1975,13 @@ async function getLaunchpadItemInfo(
 ): Promise<LaunchpadItemInfo> {
 	launchpadPromise ??= container.launchpad.getCategorizedItems();
 	let result = await launchpadPromise;
-	if (result.error != null) return undefined;
+	if (!result.items) return undefined;
 
 	let lpi = result.items.find(i => i.url === pr.url);
 	if (lpi == null) {
 		// result = await container.launchpad.getCategorizedItems({ search: pr.url });
 		result = await container.launchpad.getCategorizedItems({ search: [pr] });
-		if (result.error != null) return undefined;
+		if (!result.items) return undefined;
 
 		lpi = result.items.find(i => i.url === pr.url);
 	}
@@ -1924,7 +2043,9 @@ async function getWipInfo(
 
 	const [statusResult, pausedOpStatusResult] = await Promise.allSettled([
 		statusPromise,
-		active ? container.git.getRepositoryService(branch.repoPath).status.getPausedOperationStatus?.() : undefined,
+		active
+			? container.git.getRepositoryService(branch.repoPath).pausedOps?.getPausedOperationStatus?.()
+			: undefined,
 	]);
 
 	const status = getSettledValue(statusResult);

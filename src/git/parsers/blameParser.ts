@@ -1,15 +1,15 @@
-import type { Container } from '../../container';
-import { maybeStopWatch } from '../../system/stopwatch';
-import { iterateByDelimiter } from '../../system/string';
-import type { GitBlame, GitBlameAuthor } from '../models/blame';
-import type { GitCommitLine } from '../models/commit';
-import { GitCommit, GitCommitIdentity } from '../models/commit';
-import { GitFileChange } from '../models/fileChange';
-import { GitFileIndexStatus } from '../models/fileStatus';
-import { uncommitted } from '../models/revision';
-import type { GitUser } from '../models/user';
-import { isUncommitted } from '../utils/revision.utils';
-import { isUserMatch } from '../utils/user.utils';
+import type { Container } from '../../container.js';
+import { maybeStopWatch } from '../../system/stopwatch.js';
+import { iterateByDelimiter } from '../../system/string.js';
+import type { GitBlame, GitBlameAuthor } from '../models/blame.js';
+import type { GitCommitLine } from '../models/commit.js';
+import { GitCommit, GitCommitIdentity } from '../models/commit.js';
+import { GitFileChange } from '../models/fileChange.js';
+import { GitFileIndexStatus } from '../models/fileStatus.js';
+import { uncommitted } from '../models/revision.js';
+import type { GitUser } from '../models/user.js';
+import { isUncommitted } from '../utils/revision.utils.js';
+import { isUserMatch } from '../utils/user.utils.js';
 
 interface BlameEntry {
 	sha: string;
@@ -43,7 +43,7 @@ export function parseGitBlame(
 	currentUser: GitUser | undefined,
 	modifiedTime?: number,
 ): GitBlame | undefined {
-	using sw = maybeStopWatch(`Git.parseBlame(${repoPath})`, { log: false, logLevel: 'debug' });
+	using sw = maybeStopWatch(`Git.parseBlame(${repoPath})`, { log: { onlyExit: true, level: 'debug' } });
 	if (!data) {
 		sw?.stop({ suffix: ` no data` });
 		return undefined;
@@ -181,7 +181,7 @@ export function parseGitBlame(
 		if (!c.author.name) continue;
 
 		const author = authors.get(c.author.name);
-		if (author == null) return undefined;
+		if (author == null) continue;
 
 		author.lineCount += c.lines.length;
 	}
@@ -264,7 +264,7 @@ function parseBlameEntry(
 	for (let i = 0, len = entry.lineCount; i < len; i++) {
 		const line: GitCommitLine = {
 			sha: entry.sha,
-			previousSha: commit.file!.previousSha,
+			previousSha: entry.previousSha ?? commit.file!.previousSha,
 			originalLine: entry.originalLine + i,
 			line: entry.line + i,
 		};

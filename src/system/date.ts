@@ -79,7 +79,7 @@ export function createFromDateDelta(
 }
 
 export function fromNow(date: Date | number, short?: boolean): string {
-	const elapsed = (typeof date === 'number' ? date : date.getTime()) - new Date().getTime();
+	const elapsed = (typeof date === 'number' ? date : date.getTime()) - Date.now();
 
 	for (const [unit, threshold, divisor, shortUnit] of relativeUnitThresholds) {
 		const elapsedABS = Math.abs(elapsed);
@@ -101,29 +101,25 @@ export function fromNow(date: Date | number, short?: boolean): string {
 				}
 
 				if (locale === 'en' || locale?.startsWith('en-')) {
-					const value = Math.round(elapsedABS / divisor);
+					const value = Math.floor(elapsedABS / divisor);
 					return `${value}${shortUnit}`;
 				}
 
-				if (defaultShortRelativeTimeFormat == null) {
-					defaultShortRelativeTimeFormat = new Intl.RelativeTimeFormat(defaultLocales, {
-						localeMatcher: 'best fit',
-						numeric: 'always',
-						style: 'narrow',
-					});
-				}
-
-				return defaultShortRelativeTimeFormat.format(Math.round(elapsed / divisor), unit);
-			}
-
-			if (defaultRelativeTimeFormat == null) {
-				defaultRelativeTimeFormat = new Intl.RelativeTimeFormat(defaultLocales, {
+				defaultShortRelativeTimeFormat ??= new Intl.RelativeTimeFormat(defaultLocales, {
 					localeMatcher: 'best fit',
-					numeric: 'auto',
-					style: 'long',
+					numeric: 'always',
+					style: 'narrow',
 				});
+
+				return defaultShortRelativeTimeFormat.format(Math.trunc(elapsed / divisor), unit);
 			}
-			return defaultRelativeTimeFormat.format(Math.round(elapsed / divisor), unit);
+
+			defaultRelativeTimeFormat ??= new Intl.RelativeTimeFormat(defaultLocales, {
+				localeMatcher: 'best fit',
+				numeric: 'auto',
+				style: 'long',
+			});
+			return defaultRelativeTimeFormat.format(Math.trunc(elapsed / divisor), unit);
 		}
 	}
 
@@ -373,9 +369,7 @@ export function getNumericFormat(
 	style?: 'decimal' | 'currency' | 'percent' | 'unit' | null | undefined,
 	locale?: string,
 ): Intl.NumberFormat['format'] {
-	if (style == null) {
-		style = 'decimal';
-	}
+	style ??= 'decimal';
 
 	const key = `${locale ?? ''}:${style}`;
 

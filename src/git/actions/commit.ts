@@ -1,36 +1,38 @@
 import type { TextDocumentShowOptions, TextEditor, ViewColumn } from 'vscode';
 import { env, Range, Uri, window, workspace } from 'vscode';
-import type { DiffWithCommandArgs } from '../../commands/diffWith';
-import type { DiffWithPreviousCommandArgs } from '../../commands/diffWithPrevious';
-import type { DiffWithWorkingCommandArgs } from '../../commands/diffWithWorking';
-import type { ExplainCommitCommandArgs } from '../../commands/explainCommit';
-import type { OpenFileOnRemoteCommandArgs } from '../../commands/openFileOnRemote';
-import type { OpenOnlyChangedFilesCommandArgs } from '../../commands/openOnlyChangedFiles';
-import type { OpenWorkingFileCommandArgs } from '../../commands/openWorkingFile';
-import type { ShowQuickCommitCommandArgs } from '../../commands/showQuickCommit';
-import type { ShowQuickCommitFileCommandArgs } from '../../commands/showQuickCommitFile';
-import type { FileAnnotationType } from '../../config';
-import { GlyphChars } from '../../constants';
-import type { Source } from '../../constants.telemetry';
-import { Container } from '../../container';
-import { showRevisionFilesPicker } from '../../quickpicks/revisionFilesPicker';
-import { executeCommand, executeCoreGitCommand, executeEditorCommand } from '../../system/-webview/command';
-import { configuration } from '../../system/-webview/configuration';
-import { getOrOpenTextEditor, openChangesEditor, openTextEditors } from '../../system/-webview/vscode/editors';
-import { getSettledValue } from '../../system/promise';
-import type { ViewNode } from '../../views/nodes/abstract/viewNode';
-import type { ShowInCommitGraphCommandArgs } from '../../webviews/plus/graph/registration';
-import { GitUri } from '../gitUri';
-import type { GitCommit } from '../models/commit';
-import { isCommit } from '../models/commit';
-import type { GitFile } from '../models/file';
-import { GitFileChange } from '../models/fileChange';
-import type { GitRevisionReference } from '../models/reference';
-import { deletedOrMissing } from '../models/revision';
-import { getAheadBehindFilesQuery } from '../queryResults';
-import { getReferenceFromRevision } from '../utils/-webview/reference.utils';
-import { createReference, getReferenceLabel } from '../utils/reference.utils';
-import { createRevisionRange, isUncommitted, isUncommittedStaged, shortenRevision } from '../utils/revision.utils';
+import type { DiffWithCommandArgs } from '../../commands/diffWith.js';
+import type { DiffWithPreviousCommandArgs } from '../../commands/diffWithPrevious.js';
+import type { DiffWithWorkingCommandArgs } from '../../commands/diffWithWorking.js';
+import type { ExplainCommitCommandArgs } from '../../commands/explainCommit.js';
+import type { OpenFileOnRemoteCommandArgs } from '../../commands/openFileOnRemote.js';
+import type { OpenOnlyChangedFilesCommandArgs } from '../../commands/openOnlyChangedFiles.js';
+import type { OpenWorkingFileCommandArgs } from '../../commands/openWorkingFile.js';
+import type { ShowQuickCommitCommandArgs } from '../../commands/showQuickCommit.js';
+import type { ShowQuickCommitFileCommandArgs } from '../../commands/showQuickCommitFile.js';
+import type { FileAnnotationType } from '../../config.js';
+import { GlyphChars } from '../../constants.js';
+import type { Source } from '../../constants.telemetry.js';
+import { Container } from '../../container.js';
+import { showGitErrorMessage } from '../../messages.js';
+import { showRevisionFilesPicker } from '../../quickpicks/revisionFilesPicker.js';
+import { executeCommand, executeCoreGitCommand, executeEditorCommand } from '../../system/-webview/command.js';
+import { configuration } from '../../system/-webview/configuration.js';
+import { getOrOpenTextEditor, openChangesEditor, openTextEditors } from '../../system/-webview/vscode/editors.js';
+import { getSettledValue } from '../../system/promise.js';
+import type { ViewNode } from '../../views/nodes/abstract/viewNode.js';
+import type { RevealOptions } from '../../views/viewBase.js';
+import type { ShowInCommitGraphCommandArgs } from '../../webviews/plus/graph/registration.js';
+import { GitUri } from '../gitUri.js';
+import type { GitCommit } from '../models/commit.js';
+import { isCommit } from '../models/commit.js';
+import type { GitFile } from '../models/file.js';
+import { GitFileChange } from '../models/fileChange.js';
+import type { GitRevisionReference } from '../models/reference.js';
+import { deletedOrMissing } from '../models/revision.js';
+import { getAheadBehindFilesQuery } from '../queryResults.js';
+import { getReferenceFromRevision } from '../utils/-webview/reference.utils.js';
+import { createReference, getReferenceLabel } from '../utils/reference.utils.js';
+import { createRevisionRange, isUncommitted, isUncommittedStaged, shortenRevision } from '../utils/revision.utils.js';
 
 export type Ref = { repoPath: string; ref: string };
 export type RefRange = { repoPath: string; rhs: string; lhs: string };
@@ -291,7 +293,7 @@ export async function openChanges(
 
 	if (file.status === 'A' && hasCommit) {
 		const commit = await commitOrRefs.getCommitForFile(file);
-		void executeCommand<DiffWithPreviousCommandArgs>('gitlens.diffWithPrevious', {
+		void executeCommand<DiffWithPreviousCommandArgs>('gitlens.diffWithPrevious:command', {
 			commit: commit,
 			showOptions: options,
 		});
@@ -384,7 +386,7 @@ export async function openChangesWithWorking(
 
 	options = { preserveFocus: true, preview: false, ...options };
 
-	void (await executeEditorCommand<DiffWithWorkingCommandArgs>('gitlens.diffWithWorking', undefined, {
+	void (await executeEditorCommand<DiffWithWorkingCommandArgs>('gitlens.diffWithWorking:command', undefined, {
 		uri: GitUri.fromFile(file, ref.repoPath, ref.ref),
 		showOptions: options,
 		lhsTitle: options?.lhsTitle,
@@ -489,7 +491,7 @@ export async function openFile(
 
 	options = { preserveFocus: true, preview: false, ...options };
 
-	void (await executeEditorCommand<OpenWorkingFileCommandArgs>('gitlens.openWorkingFile', undefined, {
+	void (await executeEditorCommand<OpenWorkingFileCommandArgs>('gitlens.openWorkingFile:command', undefined, {
 		uri: uri,
 		showOptions: options,
 	}));
@@ -662,12 +664,16 @@ export async function openFilesAtRevision(
 	);
 }
 
-export async function restoreFile(file: string | GitFile, revision: GitRevisionReference): Promise<void> {
+export async function restoreFile(
+	file: string | GitFile,
+	revision: GitRevisionReference,
+	previous?: boolean,
+): Promise<void> {
 	let path;
-	let ref;
+	let rev;
 	if (typeof file === 'string') {
 		path = file;
-		ref = revision.ref;
+		rev = previous ? `${revision.ref}^` : revision.ref;
 	} else {
 		path = file.path;
 		if (file.status === 'D') {
@@ -675,28 +681,31 @@ export async function restoreFile(file: string | GitFile, revision: GitRevisionR
 			const uri = GitUri.fromFile(file, revision.repoPath);
 			try {
 				await workspace.fs.stat(uri);
-				ref = `${revision.ref}^`;
+				rev = `${revision.ref}^`;
 			} catch {
-				ref = revision.ref;
+				rev = previous ? `${revision.ref}^` : revision.ref;
 			}
 		} else if (file.status === '?') {
-			ref = `${revision.ref}^3`;
+			rev = `${revision.ref}^3`;
 		} else {
-			ref = revision.ref;
+			rev = previous ? `${revision.ref}^` : revision.ref;
 		}
 	}
 
-	await Container.instance.git.getRepositoryService(revision.repoPath).checkout(ref, { path: path });
+	try {
+		await Container.instance.git.getRepositoryService(revision.repoPath).ops?.checkout(rev, { path: path });
+	} catch (ex) {
+		void showGitErrorMessage(
+			ex,
+			`Unable to restore '${path}' from revision '${getReferenceLabel(revision, {
+				icon: false,
+				capitalize: false,
+			})}': ${ex.message}`,
+		);
+	}
 }
 
-export function reveal(
-	commit: GitRevisionReference,
-	options?: {
-		select?: boolean;
-		focus?: boolean;
-		expand?: boolean | number;
-	},
-): Promise<ViewNode | undefined> {
+export function revealCommit(commit: GitRevisionReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 	return Container.instance.views.revealCommit(commit, options);
 }
 
@@ -721,7 +730,7 @@ export async function showDetailsQuickPick(commit: GitCommit, fileOrUri?: string
 	}));
 }
 
-export function showDetailsView(
+export function showCommitInDetailsView(
 	commit: GitRevisionReference | GitCommit,
 	options?: { pin?: boolean; preserveFocus?: boolean; preserveVisibility?: boolean },
 ): Promise<void> {
@@ -729,7 +738,7 @@ export function showDetailsView(
 	return Container.instance.views.commitDetails.show({ preserveFocus: preserveFocus }, opts);
 }
 
-export function showGraphDetailsView(
+export function showCommitInGraphDetailsView(
 	commit: GitRevisionReference | GitCommit,
 	options?: { pin?: boolean; preserveFocus?: boolean; preserveVisibility?: boolean },
 ): Promise<void> {
@@ -737,13 +746,14 @@ export function showGraphDetailsView(
 	return Container.instance.views.graphDetails.show({ preserveFocus: preserveFocus }, opts);
 }
 
-export async function showInCommitGraph(
+export async function showCommitInGraph(
 	commit: GitRevisionReference | GitCommit,
-	options?: { preserveFocus?: boolean },
+	options?: { preserveFocus?: boolean; source?: Source },
 ): Promise<void> {
 	void (await executeCommand<ShowInCommitGraphCommandArgs>('gitlens.showInCommitGraph', {
 		ref: getReferenceFromRevision(commit),
 		preserveFocus: options?.preserveFocus,
+		source: options?.source,
 	}));
 }
 
@@ -754,7 +764,7 @@ export async function explainCommit(
 	void (await executeCommand<ExplainCommitCommandArgs>('gitlens.ai.explainCommit', {
 		repoPath: commit.repoPath,
 		rev: commit.ref,
-		source: { ...options?.source, type: 'commit' },
+		source: { ...options?.source, context: { type: 'commit' } },
 	}));
 }
 
@@ -769,7 +779,22 @@ export async function openOnlyChangedFiles(container: Container, commitOrFiles: 
 
 		files = commitOrFiles.fileset?.files ?? [];
 	} else {
-		files = commitOrFiles.map(f => new GitFileChange(container, f.repoPath!, f.path, f.status, f.originalPath));
+		files = commitOrFiles.map(
+			f =>
+				new GitFileChange(
+					container,
+					f.repoPath!,
+					f.path,
+					f.status,
+					f.originalPath,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					f.submodule != null ? '160000' : undefined,
+					f.submodule,
+				),
+		);
 	}
 
 	if (
@@ -803,8 +828,9 @@ export async function undoCommit(container: Container, commit: GitRevisionRefere
 		return;
 	}
 
-	const status = await svc.status.getStatus();
-	if (status?.files.length) {
+	// Check for uncommitted changes before prompting
+	const hasChanges = await svc.status.hasWorkingChanges();
+	if (hasChanges) {
 		const confirm = { title: 'Undo Commit' };
 		const cancel = { title: 'Cancel', isCloseAffordance: true };
 		const result = await window.showWarningMessage(

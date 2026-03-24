@@ -1,34 +1,17 @@
-/*global document window*/
-import type { CssVariables } from '@gitkraken/gitkraken-components';
-import { provide } from '@lit/context';
+import './graph.scss';
 import { html } from 'lit';
 import { customElement, query, state } from 'lit/decorators.js';
-import { Color, getCssVariable, mix, opacity } from '../../../../system/color';
-import type { State } from '../../../plus/graph/protocol';
-import type { StateProvider } from '../../shared/appHost';
-import { GlAppHost } from '../../shared/appHost';
-import type { HostIpc } from '../../shared/ipc';
-import type { ThemeChangeEvent } from '../../shared/theme';
-import type { GraphApp } from './graph-app';
-import { GraphAppState, graphStateContext, GraphStateProvider } from './stateProvider';
-import './graph-app';
-import './graph.scss';
-
-const graphLaneThemeColors = new Map([
-	['--vscode-gitlens-graphLane1Color', '#15a0bf'],
-	['--vscode-gitlens-graphLane2Color', '#0669f7'],
-	['--vscode-gitlens-graphLane3Color', '#8e00c2'],
-	['--vscode-gitlens-graphLane4Color', '#c517b6'],
-	['--vscode-gitlens-graphLane5Color', '#d90171'],
-	['--vscode-gitlens-graphLane6Color', '#cd0101'],
-	['--vscode-gitlens-graphLane7Color', '#f25d2e'],
-	['--vscode-gitlens-graphLane8Color', '#f2ca33'],
-	['--vscode-gitlens-graphLane9Color', '#7bd938'],
-	['--vscode-gitlens-graphLane10Color', '#2ece9d'],
-]);
+import { Color } from '../../../../system/color.js';
+import type { State } from '../../../plus/graph/protocol.js';
+import { GlAppHost } from '../../shared/appHost.js';
+import type { HostIpc } from '../../shared/ipc.js';
+import type { ThemeChangeEvent } from '../../shared/theme.js';
+import type { GraphApp } from './graph-app.js';
+import { GraphStateProvider } from './stateProvider.js';
+import './graph-app.js';
 
 @customElement('gl-graph-apphost')
-export class GraphAppHost extends GlAppHost<State> {
+export class GraphAppHost extends GlAppHost<State, GraphStateProvider> {
 	protected override createRenderRoot(): HTMLElement | DocumentFragment {
 		return this;
 	}
@@ -36,12 +19,11 @@ export class GraphAppHost extends GlAppHost<State> {
 	@query('gl-graph-app')
 	private appElement!: GraphApp;
 
-	@provide({ context: graphStateContext })
-	private readonly _graphState: typeof graphStateContext.__context__ = new GraphAppState();
+	private _initialRowsLoaded = false;
 
 	@state()
 	searching: string = '';
-	searchResultsHidden: unknown;
+
 	get hasFilters() {
 		if (this.state.config?.onlyFollowFirstParent) return true;
 		if (this.state.excludeTypes == null) return false;
@@ -53,20 +35,17 @@ export class GraphAppHost extends GlAppHost<State> {
 		return html`<gl-graph-app></gl-graph-app>`;
 	}
 
-	protected override createStateProvider(state: State, ipc: HostIpc): StateProvider<State> {
-		return new GraphStateProvider(this, state, ipc, this._logger, {
+	protected override createStateProvider(bootstrap: string, ipc: HostIpc): GraphStateProvider {
+		return new GraphStateProvider(this, bootstrap, ipc, this._logger, {
 			onStateUpdate: partial => {
-				if ('loading' in partial) {
-					this._graphState.loading = partial.loading ?? false;
-				}
 				if ('rows' in partial) {
 					this.appElement.resetHover();
-				}
-				if ('selectedRows' in partial) {
-					this._graphState.selectedRows = partial.selectedRows;
-				}
-				if ('searchResults' in partial) {
-					this._graphState.searchResultsResponse = partial.searchResults;
+
+					// Focus the graph after initial rows are loaded
+					if (!this._initialRowsLoaded && partial.rows?.length) {
+						this._initialRowsLoaded = true;
+						requestAnimationFrame(() => this.appElement?.graph?.focus());
+					}
 				}
 			},
 		});
@@ -162,116 +141,9 @@ export class GraphAppHost extends GlAppHost<State> {
 			'--branch-status-both-pill-background',
 			c.luminance(branchStatusPillLuminance).toString(),
 		);
-
-		const th = this.getGraphTheming();
-		Object.entries(th.cssVariables).forEach(([property, value]) => {
-			rootStyle.setProperty(property, value.toString());
-		});
-		this.applyTheme(th);
 	}
 
 	protected override onWebviewVisibilityChanged(visible: boolean): void {
 		this.appElement?.onWebviewVisibilityChanged(visible);
-	}
-
-	private applyTheme(theme: { cssVariables: CssVariables; themeOpacityFactor: number }) {
-		this._graphState.theming = theme;
-	}
-
-	private getGraphTheming(): { cssVariables: CssVariables; themeOpacityFactor: number } {
-		// this will be called on theme updated as well as on config updated since it is dependent on the column colors from config changes and the background color from the theme
-		const computedStyle = window.getComputedStyle(document.documentElement);
-		const bgColor = getCssVariable('--color-background', computedStyle);
-
-		const mixedGraphColors: CssVariables = {};
-
-		let i = 0;
-		let color;
-		for (const [colorVar, colorDefault] of graphLaneThemeColors) {
-			color = getCssVariable(colorVar, computedStyle) || colorDefault;
-
-			mixedGraphColors[`--column-${i}-color`] = color;
-
-			mixedGraphColors[`--graph-color-${i}`] = color;
-			for (const mixInt of [15, 25, 45, 50]) {
-				mixedGraphColors[`--graph-color-${i}-bg${mixInt}`] = mix(bgColor, color, mixInt);
-			}
-			for (const mixInt of [10, 50]) {
-				mixedGraphColors[`--graph-color-${i}-f${mixInt}`] = opacity(color, mixInt);
-			}
-
-			i++;
-		}
-
-		const isHighContrastTheme =
-			document.body.classList.contains('vscode-high-contrast') ||
-			document.body.classList.contains('vscode-high-contrast-light');
-
-		return {
-			cssVariables: {
-				'--app__bg0': bgColor,
-				'--panel__bg0': getCssVariable('--color-graph-background', computedStyle),
-				'--panel__bg1': getCssVariable('--color-graph-background2', computedStyle),
-				'--section-border': getCssVariable('--color-graph-background2', computedStyle),
-
-				'--selected-row': getCssVariable('--color-graph-selected-row', computedStyle),
-				'--selected-row-border': isHighContrastTheme
-					? `1px solid ${getCssVariable('--color-graph-contrast-border', computedStyle)}`
-					: 'none',
-				'--hover-row': getCssVariable('--color-graph-hover-row', computedStyle),
-				'--hover-row-border': isHighContrastTheme
-					? `1px dashed ${getCssVariable('--color-graph-contrast-border', computedStyle)}`
-					: 'none',
-
-				'--scrollable-scrollbar-thickness': getCssVariable('--graph-column-scrollbar-thickness', computedStyle),
-				'--scroll-thumb-bg': getCssVariable('--vscode-scrollbarSlider-background', computedStyle),
-
-				'--scroll-marker-head-color': getCssVariable('--color-graph-scroll-marker-head', computedStyle),
-				'--scroll-marker-upstream-color': getCssVariable('--color-graph-scroll-marker-upstream', computedStyle),
-				'--scroll-marker-highlights-color': getCssVariable(
-					'--color-graph-scroll-marker-highlights',
-					computedStyle,
-				),
-				'--scroll-marker-local-branches-color': getCssVariable(
-					'--color-graph-scroll-marker-local-branches',
-					computedStyle,
-				),
-				'--scroll-marker-remote-branches-color': getCssVariable(
-					'--color-graph-scroll-marker-remote-branches',
-					computedStyle,
-				),
-				'--scroll-marker-stashes-color': getCssVariable('--color-graph-scroll-marker-stashes', computedStyle),
-				'--scroll-marker-tags-color': getCssVariable('--color-graph-scroll-marker-tags', computedStyle),
-				'--scroll-marker-selection-color': getCssVariable(
-					'--color-graph-scroll-marker-selection',
-					computedStyle,
-				),
-				'--scroll-marker-pull-requests-color': getCssVariable(
-					'--color-graph-scroll-marker-pull-requests',
-					computedStyle,
-				),
-
-				'--stats-added-color': getCssVariable('--color-graph-stats-added', computedStyle),
-				'--stats-deleted-color': getCssVariable('--color-graph-stats-deleted', computedStyle),
-				'--stats-files-color': getCssVariable('--color-graph-stats-files', computedStyle),
-				'--stats-bar-border-radius': getCssVariable('--graph-stats-bar-border-radius', computedStyle),
-				'--stats-bar-height': getCssVariable('--graph-stats-bar-height', computedStyle),
-
-				'--text-selected': getCssVariable('--color-graph-text-selected', computedStyle),
-				'--text-selected-row': getCssVariable('--color-graph-text-selected-row', computedStyle),
-				'--text-hovered': getCssVariable('--color-graph-text-hovered', computedStyle),
-				'--text-dimmed-selected': getCssVariable('--color-graph-text-dimmed-selected', computedStyle),
-				'--text-dimmed': getCssVariable('--color-graph-text-dimmed', computedStyle),
-				'--text-normal': getCssVariable('--color-graph-text-normal', computedStyle),
-				'--text-secondary': getCssVariable('--color-graph-text-secondary', computedStyle),
-				'--text-disabled': getCssVariable('--color-graph-text-disabled', computedStyle),
-
-				'--text-accent': getCssVariable('--color-link-foreground', computedStyle),
-				'--text-inverse': getCssVariable('--vscode-input-background', computedStyle),
-				'--text-bright': getCssVariable('--vscode-input-background', computedStyle),
-				...mixedGraphColors,
-			},
-			themeOpacityFactor: parseInt(getCssVariable('--graph-theme-opacity-factor', computedStyle)) || 1,
-		};
 	}
 }

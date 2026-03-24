@@ -1,7 +1,8 @@
-import { fetch } from '@env/fetch';
-import { openRouterProviderDescriptor as provider } from '../../constants.ai';
-import type { AIActionType, AIModel } from './models/model';
-import { OpenAICompatibleProviderBase } from './openAICompatibleProviderBase';
+import { fetch } from '@env/fetch.js';
+import { openRouterProviderDescriptor as provider } from '../../constants.ai.js';
+import { isCancellationError } from '../../errors.js';
+import type { AIActionType, AIModel } from './models/model.js';
+import { OpenAICompatibleProviderBase } from './openAICompatibleProviderBase.js';
 
 type OpenRouterModel = AIModel<typeof provider.id>;
 
@@ -15,7 +16,15 @@ export class OpenRouterProvider extends OpenAICompatibleProviderBase<typeof prov
 	};
 
 	async getModels(): Promise<readonly AIModel<typeof provider.id>[]> {
-		const apiKey = await this.getApiKey(true);
+		let apiKey: string | undefined;
+		try {
+			apiKey = await this.getApiKey(true);
+		} catch (ex) {
+			if (isCancellationError(ex)) return [];
+
+			throw ex;
+		}
+
 		if (!apiKey) return [];
 
 		const url = 'https://openrouter.ai/api/v1/models';

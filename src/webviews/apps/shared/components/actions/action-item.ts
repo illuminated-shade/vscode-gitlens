@@ -1,9 +1,9 @@
 import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
-import { getAltKeySymbol } from '@env/platform';
-import { focusOutline } from '../styles/lit/a11y.css';
-import '../overlays/tooltip';
-import '../code-icon';
+import { getAltKeySymbol } from '@env/platform.js';
+import { focusOutline } from '../styles/lit/a11y.css.js';
+import '../overlays/tooltip.js';
+import '../code-icon.js';
 
 @customElement('action-item')
 export class ActionItem extends LitElement {
@@ -21,7 +21,7 @@ export class ActionItem extends LitElement {
 			width: 2rem;
 			height: 2rem;
 			border-radius: 0.5rem;
-			color: inherit;
+			color: var(--action-item-foreground, var(--vscode-icon-foreground));
 			padding: 0.2rem;
 			vertical-align: text-bottom;
 			text-decoration: none;
@@ -32,7 +32,8 @@ export class ActionItem extends LitElement {
 			${focusOutline}
 		}
 
-		:host(:hover) {
+		:host(:hover),
+		:host(:focus-within) {
 			background-color: var(--vscode-toolbar-hoverBackground);
 		}
 
@@ -47,9 +48,18 @@ export class ActionItem extends LitElement {
 
 		a {
 			color: inherit;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			width: 100%;
+			height: 100%;
+			text-decoration: none;
 		}
 		a:focus {
 			outline: none;
+		}
+		a:is(:hover, :focus, :active) {
+			text-decoration: none;
 		}
 	`;
 
@@ -147,12 +157,23 @@ export class ActionItem extends LitElement {
 					aria-label="${this.effectiveLabel ?? nothing}"
 					?disabled=${this.disabled}
 					href=${this.effectiveHref ?? nothing}
+					tabindex="0"
+					@keydown=${this.handleLinkKeydown}
 				>
-					<code-icon icon="${this.effectiveIcon}"></code-icon>
+					<code-icon part="icon" icon="${this.effectiveIcon}"></code-icon>
 				</a>
 			</gl-tooltip>
 		`;
 	}
+
+	private handleLinkKeydown = (e: KeyboardEvent) => {
+		// Handle Space and Enter for button-role links without href
+		if (!this.effectiveHref && (e.key === ' ' || e.key === 'Enter')) {
+			e.preventDefault();
+			// Trigger a click event
+			(e.target as HTMLElement).click();
+		}
+	};
 
 	override focus(options?: FocusOptions): void {
 		this.defaultFocusEl.focus(options);

@@ -1,24 +1,27 @@
+/* eslint-disable @typescript-eslint/no-deprecated -- disabling until we can migrate to the new Lit-based base */
 /*global document IntersectionObserver*/
 import './settings.scss';
-import type { ConnectCloudIntegrationsCommandArgs } from '../../../commands/cloudIntegrations';
-import type { AutolinkConfig } from '../../../config';
-import type { IssuesCloudHostIntegrationId, SupportedCloudIntegrationIds } from '../../../constants.integrations';
-import { createCommandLink } from '../../../system/commands';
-import type { IpcMessage, UpdateConfigurationParams } from '../../protocol';
-import { DidChangeConfigurationNotification, UpdateConfigurationCommand } from '../../protocol';
-import type { State } from '../../settings/protocol';
+import type { ConnectCloudIntegrationsCommandArgs } from '../../../commands/cloudIntegrations.js';
+import type { AutolinkConfig } from '../../../config.js';
+import type { SupportedCloudIntegrationIds } from '../../../constants.integrations.js';
+import { IssuesCloudHostIntegrationId } from '../../../constants.integrations.js';
+import { createCommandLink } from '../../../system/commands.js';
+import type { IpcMessage } from '../../ipc/models/ipc.js';
+import type { UpdateConfigurationParams } from '../../protocol.js';
+import { DidChangeConfigurationNotification, UpdateConfigurationCommand } from '../../protocol.js';
+import type { State } from '../../settings/protocol.js';
 import {
 	DidChangeAccountNotification,
-	DidChangeConnectedJiraNotification,
+	DidChangeIssueIntegrationConnectedNotification,
 	DidOpenAnchorNotification,
 	GenerateConfigurationPreviewRequest,
-} from '../../settings/protocol';
-import { App } from '../shared/appBase';
-import { formatDate, setDefaultDateLocales } from '../shared/date';
-import { DOM } from '../shared/dom';
-import type { Disposable } from '../shared/events';
-import '../shared/components/feature-badge';
-import '../shared/components/gitlens-logo';
+} from '../../settings/protocol.js';
+import { App } from '../shared/appBase.js';
+import { formatDate, setDefaultDateLocales } from '../shared/date.js';
+import { DOM } from '../shared/dom.js';
+import type { Disposable } from '../shared/events.js';
+import '../shared/components/feature-badge.js';
+import '../shared/components/gitlens-logo.js';
 
 const topOffset = 83;
 const offset = (new Date().getTimezoneOffset() / 60) * 100;
@@ -159,8 +162,12 @@ export class SettingsApp extends App<State> {
 				this.renderAutolinkIntegration();
 				break;
 
-			case DidChangeConnectedJiraNotification.is(msg):
-				this.state.hasConnectedJira = msg.params.hasConnectedJira;
+			case DidChangeIssueIntegrationConnectedNotification.is(msg):
+				if (msg.params.integrationId === IssuesCloudHostIntegrationId.Jira) {
+					this.state.hasConnectedJira = msg.params.connected;
+				} else if (msg.params.integrationId === IssuesCloudHostIntegrationId.Linear) {
+					this.state.hasConnectedLinear = msg.params.connected;
+				}
 				this.setState(this.state);
 				this.renderAutolinkIntegration();
 				break;
@@ -340,7 +347,7 @@ export class SettingsApp extends App<State> {
 				if (element.checked) {
 					this._changes[element.name] = fromCheckboxValue(element.value);
 				} else {
-					this._changes[element.name] = element.dataset.valueOff == null ? false : element.dataset.valueOff;
+					this._changes[element.name] = element.dataset.valueOff ?? false;
 				}
 
 				break;
@@ -627,9 +634,7 @@ export class SettingsApp extends App<State> {
 					if (lookup != null) {
 						value = this.getSettingValue<string>(lookup);
 					}
-					if (value == null) {
-						value = el.dataset.settingPreviewDefault;
-					}
+					value ??= el.dataset.settingPreviewDefault;
 				}
 
 				el.innerText = value == null ? '' : formatDate(date, value, undefined, false);
@@ -804,8 +809,8 @@ export class SettingsApp extends App<State> {
 		const $root = document.querySelector('[data-component="autolink-integration"]');
 		if ($root == null) return;
 
-		const { hasAccount, hasConnectedJira } = this.state;
-		let message = `<a href="${createCommandLink<ConnectCloudIntegrationsCommandArgs>(
+		const { hasAccount, hasConnectedJira, hasConnectedLinear } = this.state;
+		let messageJira = `<a href="${createCommandLink<ConnectCloudIntegrationsCommandArgs>(
 			'gitlens.plus.cloudIntegrations.connect',
 			{
 				integrationIds: ['jira' as IssuesCloudHostIntegrationId.Jira] as SupportedCloudIntegrationIds[],
@@ -821,11 +826,30 @@ export class SettingsApp extends App<State> {
 			hasAccount ? '' : 'sign up and '
 		}get access to automatic rich Jira autolinks.`;
 		if (hasAccount && hasConnectedJira) {
-			message =
+			messageJira =
 				'<i class="codicon codicon-check" style="vertical-align: text-bottom"></i> Jira connected &mdash; automatic rich Jira autolinks are enabled.';
 		}
+		let messageLinear = `<a href="${createCommandLink<ConnectCloudIntegrationsCommandArgs>(
+			'gitlens.plus.cloudIntegrations.connect',
+			{
+				integrationIds: ['linear' as IssuesCloudHostIntegrationId.Linear] as SupportedCloudIntegrationIds[],
+				source: {
+					source: 'settings',
+					detail: {
+						action: 'connect',
+						integration: 'linear',
+					},
+				},
+			},
+		)}">Connect to Linear</a> &mdash; ${
+			hasAccount ? '' : 'sign up and '
+		}get access to automatic rich Linear autolinks.`;
+		if (hasAccount && hasConnectedLinear) {
+			messageLinear =
+				'<i class="codicon codicon-check" style="vertical-align: text-bottom"></i> Linear connected &mdash; automatic rich Linear autolinks are enabled.';
+		}
 
-		$root.innerHTML = message;
+		$root.innerHTML = `${messageJira}<br/>${messageLinear}`;
 	}
 
 	private renderAutolinks() {

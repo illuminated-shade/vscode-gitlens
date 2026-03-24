@@ -1,4 +1,11 @@
-import { join } from './iterable';
+import { join } from './iterable.js';
+
+export function areEqual<T>(a: readonly T[] | undefined, b: readonly T[] | undefined): boolean {
+	if (a === b) return true;
+	if (a == null || b == null) return false;
+	if (a.length !== b.length) return false;
+	return a.every((value, index) => value === b[index]);
+}
 
 export function chunk<T>(source: T[], size: number): T[][] {
 	const chunks = [];
@@ -34,8 +41,14 @@ export function ensureArray<T>(source: NonNullable<T> | NonNullable<T>[] | undef
 	return source == null ? undefined : Array.isArray(source) ? source : [source];
 }
 
+export function exhaustiveArray<T>() {
+	return <const A extends readonly T[]>(
+		...args: [T] extends [A[number]] ? [array: A] : [{ missingMembers: Exclude<T, A[number]> }]
+	): A => args[0] as A;
+}
+
 export function filterMap<T, TMapped>(
-	source: T[],
+	source: readonly T[],
 	predicateMapper: (item: T, index: number) => TMapped | null | undefined,
 ): TMapped[] {
 	let index = 0;

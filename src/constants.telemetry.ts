@@ -1,17 +1,24 @@
-import type { Config, GraphBranchesVisibility, GraphConfig } from './config';
-import type { WalkthroughSteps } from './constants';
-import type { AIProviders } from './constants.ai';
-import type { GlCommands, GlCommandsDeprecated } from './constants.commands';
-import type { IntegrationIds, SupportedCloudIntegrationIds } from './constants.integrations';
-import type { SubscriptionState } from './constants.subscription';
-import type { CustomEditorTypes, TreeViewTypes, WebviewTypes, WebviewViewTypes } from './constants.views';
-import type { FeaturePreviews, FeaturePreviewStatus } from './features';
-import type { GitContributionTiers } from './git/models/contributor';
-import type { Subscription, SubscriptionAccount, SubscriptionStateString } from './plus/gk/models/subscription';
-import type { Flatten } from './system/object';
-import type { WalkthroughContextKeys } from './telemetry/walkthroughStateProvider';
-import type { GraphColumnConfig } from './webviews/plus/graph/protocol';
-import type { TimelinePeriod, TimelineScopeType, TimelineSliceBy } from './webviews/plus/timeline/protocol';
+import type { Config, GraphBranchesVisibility, GraphConfig } from './config.js';
+import type { AIProviders } from './constants.ai.js';
+import type { GlCommands, GlCommandsDeprecated } from './constants.commands.js';
+import type { IntegrationIds, SupportedCloudIntegrationIds } from './constants.integrations.js';
+import type { WalkthroughSteps } from './constants.js';
+import type { SubscriptionState } from './constants.subscription.js';
+import type {
+	CustomEditorTypes,
+	TreeViewTypes,
+	WebviewPanelTypes,
+	WebviewTypes,
+	WebviewViewTypes,
+} from './constants.views.js';
+import type { WalkthroughContextKeys } from './constants.walkthroughs.js';
+import type { FeaturePreviews, FeaturePreviewStatus } from './features.js';
+import type { GitContributionTiers } from './git/models/contributor.js';
+import type { AIActionType } from './plus/ai/models/model.js';
+import type { Subscription, SubscriptionAccount, SubscriptionStateString } from './plus/gk/models/subscription.js';
+import type { Flatten } from './system/object.js';
+import type { GraphColumnConfig } from './webviews/plus/graph/protocol.js';
+import type { TimelinePeriod, TimelineScopeType, TimelineSliceBy } from './webviews/plus/timeline/protocol.js';
 
 export declare type AttributeValue =
 	| string
@@ -35,6 +42,7 @@ export interface TelemetryGlobalContext extends SubscriptionEventData {
 	upgradedFrom: string | undefined;
 	'folders.count': number;
 	'folders.schemes': string;
+	'gk.mcp.registrationCompleted': boolean;
 	'providers.count': number;
 	'providers.ids': string;
 	'repositories.count': number;
@@ -50,7 +58,7 @@ export interface TelemetryGlobalContext extends SubscriptionEventData {
 	'workspace.isTrusted': boolean;
 }
 
-export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownEvents {
+export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownEvents, WebviewClosedEvents {
 	/** Sent when account validation fails */
 	'account/validation/failed': AccountValidationFailedEvent;
 
@@ -63,8 +71,14 @@ export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownE
 	/** Sent when generating summaries from commits, stashes, patches, etc. */
 	'ai/generate': AIGenerateEvent;
 
+	/** Sent when AI is enabled */
+	'ai/enabled': void;
+
 	/** Sent when switching ai models */
 	'ai/switchModel': AISwitchModelEvent;
+
+	/** Sent when a user provides feedback (rating and optional details) for an AI feature */
+	'ai/feedback': AIFeedbackEvent;
 
 	/** Sent when user dismisses the AI All Access banner */
 	'aiAllAccess/bannerDismissed': void;
@@ -74,6 +88,13 @@ export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownE
 
 	/** Sent when user opts in to AI All Access */
 	'aiAllAccess/optedIn': void;
+
+	/** Sent when a CLI install attempt is started */
+	'cli/install/started': CLIInstallStartedEvent;
+	/** Sent when a CLI install attempt succeeds */
+	'cli/install/succeeded': CLIInstallSucceededEvent;
+	/** Sent when a CLI install attempt fails */
+	'cli/install/failed': CLIInstallFailedEvent;
 
 	/** Sent when connecting to one or more cloud-based integrations */
 	'cloudIntegrations/connecting': CloudIntegrationsConnectingEvent;
@@ -120,10 +141,61 @@ export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownE
 	/** Sent when a VS Code command is executed by a GitLens provided action */
 	'command/core': CoreCommandEvent;
 
+	/** Sent when a commit is signed */
+	'commit/signed': CommitSignedEvent;
+	/** Sent when commit signing fails */
+	'commit/signing/failed': CommitSigningFailedEvent;
+	/** Sent when commit signing setup is completed */
+	'commit/signing/setup': CommitSigningSetupEvent;
+	/** Sent when commit signing setup wizard is opened */
+	'commit/signing/setupWizard/opened': CommitSigningSetupWizardOpenedEvent;
+
 	/** Sent when the Inspect view is shown */
-	'commitDetails/shown': CommitDetailsShownEvent;
+	'commitDetails/shown': DetailsShownEvent;
 	/** Sent when the user changes the selected tab (mode) on the Graph Details view */
-	'commitDetails/mode/changed': CommitDetailsModeChangedEvent;
+	'commitDetails/mode/changed': DetailsModeChangedEvent;
+	/** Sent when commit reachability is successfully loaded */
+	'commitDetails/reachability/loaded': DetailsReachabilityLoadedEvent;
+	/** Sent when commit reachability fails to load */
+	'commitDetails/reachability/failed': DetailsReachabilityFailedEvent;
+
+	/** Sent when the Commit Composer is first loaded with repo data */
+	'composer/loaded': ComposerLoadedEvent;
+	/** Sent when the Commit Composer is reloaded */
+	'composer/reloaded': ComposerLoadedEvent;
+	/** Sent when the user adds unstaged changes to draft commits in the Commit Composer */
+	'composer/action/includedUnstagedChanges': ComposerEvent;
+	/** Sent when the user uses auto-compose in the Commit Composer */
+	'composer/action/compose': ComposerGenerateCommitsEvent;
+	/** Sent when the user fails an auto-compose operation in the Commit Composer */
+	'composer/action/compose/failed': ComposerGenerateCommitsFailedEvent;
+	/** Sent when the user uses recompose in the Commit Composer */
+	'composer/action/recompose': ComposerGenerateCommitsEvent;
+	/** Sent when the user fails a recompose operation in the Commit Composer */
+	'composer/action/recompose/failed': ComposerGenerateCommitsFailedEvent;
+	/** Sent when the user uses generate commit message in the Commit Composer */
+	'composer/action/generateCommitMessage': ComposerGenerateCommitMessageEvent;
+	/** Sent when the user fails a generate commit message operation in the Commit Composer */
+	'composer/action/generateCommitMessage/failed': ComposerGenerateCommitMessageFailedEvent;
+	/** Sent when the user changes the AI model in the Commit Composer */
+	'composer/action/changeAiModel': ComposerEvent;
+	/** Sent when the user finishes and commits in the Commit Composer */
+	'composer/action/finishAndCommit': ComposerEvent;
+	/** Sent when the user fails to finish and commit in the Commit Composer */
+	'composer/action/finishAndCommit/failed': ComposerFinishAndCommitFailedEvent;
+	/** Sent when the user uses the undo button in the Commit Composer */
+	'composer/action/undo': ComposerEvent;
+	/** Sent when the user uses the reset button in the Commit Composer */
+	'composer/action/reset': ComposerEvent;
+	/** Sent when the user is warned that the working directory has changed in the Commit Composer */
+	'composer/warning/workingDirectoryChanged': ComposerEvent;
+	/** Sent when the user is warned that the index has changed in the Commit Composer */
+	'composer/warning/indexChanged': ComposerEvent;
+
+	/** Sent when a conflict-prone git command (merge, rebase, cherry-pick, revert, stash apply/pop) is run */
+	'gitCommand/run': GitCommandRunEvent;
+	/** Sent when a conflict occurs while running a conflict-prone git command */
+	'gitCommand/conflict': GitCommandConflictEvent;
 
 	/** Sent when the Commit Graph is shown */
 	'graph/shown': GraphShownEvent;
@@ -158,9 +230,13 @@ export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownE
 	'graph/searched': GraphSearchedEvent;
 
 	/** Sent when the Graph Details view is shown */
-	'graphDetails/shown': GraphDetailsShownEvent;
+	'graphDetails/shown': DetailsShownEvent;
 	/** Sent when the user changes the selected tab (mode) on the Graph Details view */
-	'graphDetails/mode/changed': GraphDetailsModeChangedEvent;
+	'graphDetails/mode/changed': DetailsModeChangedEvent;
+	/** Sent when commit reachability is successfully loaded in Graph Details */
+	'graphDetails/reachability/loaded': DetailsReachabilityLoadedEvent;
+	/** Sent when commit reachability fails to load in Graph Details */
+	'graphDetails/reachability/failed': DetailsReachabilityFailedEvent;
 
 	/** Sent when a Home command is executed */
 	'home/command': CommandEventData;
@@ -172,8 +248,8 @@ export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownE
 	'home/startWork': void;
 	/** Sent when the user starts defining a user-specific merge target branch */
 	'home/changeBranchMergeTarget': void;
-	/** Sent when the user chooses to enable AI from the integrations menu */
-	'home/enableAi': void;
+	/** Sent when Home fails to load some state */
+	'home/failed': HomeFailedEvent;
 
 	/** Sent when the user takes an action on the Launchpad title bar */
 	'launchpad/title/action': LaunchpadTitleActionEvent;
@@ -201,8 +277,22 @@ export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownE
 	/** Sent when a launchpad operation is taking longer than a set timeout to complete */
 	'launchpad/operation/slow': LaunchpadOperationSlowEvent;
 
+	/** Sent when GitKraken MCP setup is started */
+	'mcp/setup/started': MCPSetupStartedEvent;
+	/** Sent when GitKraken MCP setup is completed */
+	'mcp/setup/completed': MCPSetupCompletedEvent;
+	/** Sent when GitKraken MCP setup fails */
+	'mcp/setup/failed': MCPSetupFailedEvent;
+	/** Sent when GitKraken MCP registration fails */
+	'mcp/registration/failed': MCPSetupFailedEvent;
+
 	/** Sent when a PR review was started in the inspect overview */
 	openReviewMode: OpenReviewModeEvent;
+
+	'op/gate/deadlock': OperationGateDeadlockEvent;
+	'op/git/aborted': OperationGitAbortedEvent;
+	/** Sent when a background git command waited in the queue */
+	'op/git/queueWait': OperationGitQueueWaitEvent;
 
 	/** Sent when fetching the product config fails */
 	'productConfig/failed': ProductConfigFailedEvent;
@@ -212,6 +302,40 @@ export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownE
 
 	/** Sent when we've loaded all the git providers and their repositories */
 	'providers/registrationComplete': ProvidersRegistrationCompleteEvent;
+
+	/** Sent when the Rebase Editor is shown */
+	'rebaseEditor/shown': RebaseEditorShownEvent;
+
+	/** Sent when the user starts a rebase (clicks "Start Rebase") */
+	'rebaseEditor/action/start': RebaseEditorCompletionEventData;
+	/** Sent when the user aborts a rebase */
+	'rebaseEditor/action/abort': RebaseEditorCompletionEventData;
+	/** Sent when the user continues a paused rebase */
+	'rebaseEditor/action/continue': RebaseEditorContextEventData;
+	/** Sent when the user skips a commit during a paused rebase */
+	'rebaseEditor/action/skip': RebaseEditorContextEventData;
+	/** Sent when the user switches to the text editor */
+	'rebaseEditor/action/switchToText': RebaseEditorCompletionEventData;
+	/** Sent when the user toggles the commit ordering (ascending/descending) */
+	'rebaseEditor/action/toggleOrdering': RebaseEditorToggleOrderingEvent;
+	/** Sent when the user opens the Commit Composer from the rebase editor */
+	'rebaseEditor/action/recompose': RebaseEditorCompletionEventData;
+	/** Sent when the user clicks to show conflicts */
+	'rebaseEditor/action/showConflicts': RebaseEditorContextEventData;
+	/** Sent when the user reveals a ref (commit/branch) in graph or commit details */
+	'rebaseEditor/action/revealRef': RebaseEditorRevealRefEvent;
+
+	/** Sent when the user changes rebase entry action(s) (pick, squash, drop, etc.) */
+	'rebaseEditor/entries/changed': RebaseEditorEntriesChangedEvent;
+	/** Sent when the user moves/reorders entries */
+	'rebaseEditor/entries/moved': RebaseEditorEntriesMovedEvent;
+
+	/** Sent when conflict detection starts */
+	'rebaseEditor/conflicts/detecting': RebaseEditorContextEventData;
+	/** Sent when conflict detection completes (check status for result) */
+	'rebaseEditor/conflicts/detected': RebaseEditorConflictsDetectedEvent;
+	/** Sent when conflict detection fails */
+	'rebaseEditor/conflicts/failed': RebaseEditorConflictsFailedEvent;
 
 	/** Sent when a local (Git remote-based) hosting provider is connected */
 	'remoteProviders/connected': RemoteProvidersConnectedEvent;
@@ -227,6 +351,23 @@ export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownE
 	'repository/opened': RepositoryOpenedEvent;
 	/** Sent when a repository's visibility is first requested */
 	'repository/visibility': RepositoryVisibilityEvent;
+
+	/** Sent when the user opens Start Review; use `instance` to correlate a StartReview "session" */
+	'startReview/open': StartReviewEventDataBase;
+	/** Sent when the launchpad is opened; use `instance` to correlate a StartReview "session" */
+	'startReview/opened': StartReviewConnectedEventData;
+	/** Sent when the user takes an action on a Start Review PR */
+	'startReview/pr/action': StartReviewPrActionEvent;
+	/** Sent when the user chooses a PR to review in the second step */
+	'startReview/pr/chosen': StartReviewPrChosenEvent;
+	/** Sent when the user reaches the "connect an integration" step of Start Review */
+	'startReview/steps/connect': StartReviewConnectedEventData;
+	/** Sent when the user reaches the "choose a PR" step of Start Review */
+	'startReview/steps/pr': StartReviewConnectedEventData;
+	/** Sent when the user chooses to connect an integration */
+	'startReview/title/action': StartReviewTitleActionEvent;
+	/** Sent when the user chooses to manage integrations */
+	'startReview/action': StartReviewActionEvent;
 
 	/** Sent when the user opens Start Work; use `instance` to correlate a StartWork "session" */
 	'startWork/open': StartWorkEventDataBase;
@@ -291,16 +432,24 @@ export interface TelemetryEvents extends WebviewShowAbortedEvents, WebviewShownE
 	/** Sent when the walkthrough is opened */
 	'walkthrough/action': WalkthroughActionEvent;
 	'walkthrough/completion': WalkthroughCompletionEvent;
+
+	/** Sent when an action is taken in the welcome webview */
+	'welcome/action': WelcomeActionEvent;
 }
 
 type WebviewShowAbortedEvents = {
-	[K in `${WebviewTypes | WebviewViewTypes}/showAborted`]: WebviewShownEventData;
+	[K in `${WebviewTypes}/showAborted`]: WebviewShownEventData;
 };
 type WebviewShownEvents = {
 	[K in `${Exclude<
-		WebviewTypes | WebviewViewTypes,
-		'commitDetails' | 'graph' | 'graphDetails' | 'timeline'
+		WebviewTypes,
+		'commitDetails' | 'graph' | 'graphDetails' | 'rebaseEditor' | 'timeline'
 	>}/shown`]: WebviewShownEventData & Record<`context.${string}`, string | number | boolean | undefined>;
+};
+
+type WebviewClosedEvents = {
+	[K in `${WebviewTypes}/closed`]: WebviewContextEventData &
+		Record<`context.${string}`, string | number | boolean | undefined>;
 };
 
 type ConfigEventData = {
@@ -324,22 +473,42 @@ interface ActivateEvent extends ConfigEventData {
 }
 
 interface AIEventDataBase {
+	id: string | undefined;
+
 	'model.id': string;
 	'model.provider.id': AIProviders;
 	'model.provider.name': string;
-	'retry.count': number;
-	duration?: number;
-	'input.length'?: number;
-	'output.length'?: number;
+
 	'usage.promptTokens'?: number;
 	'usage.completionTokens'?: number;
 	'usage.totalTokens'?: number;
 	'usage.limits.used'?: number;
 	'usage.limits.limit'?: number;
 	'usage.limits.resetsOn'?: string;
+}
+
+interface AIEventDataSendBase extends AIEventDataBase {
+	correlationId?: string;
+
+	'retry.count': number;
+	duration?: number;
+	'input.length'?: number;
+	'output.length'?: number;
 
 	'config.largePromptThreshold'?: number;
 	'config.usedCustomInstructions'?: boolean;
+
+	'diff.files.count'?: number;
+	'diff.hunks.count'?: number;
+	'diff.lines.count'?: number;
+	'diff.hash'?: string;
+
+	'customInstructions.used'?: boolean;
+	'customInstructions.length'?: number;
+	'customInstructions.setting.used'?: boolean;
+	'customInstructions.setting.length'?: number;
+	'customInstructions.commitMessage.setting.used'?: boolean;
+	'customInstructions.commitMessage.setting.length'?: number;
 
 	'warning.exceededLargePromptThreshold'?: boolean;
 	'warning.promptTruncated'?: boolean;
@@ -351,37 +520,37 @@ interface AIEventDataBase {
 	'failed.error.detail'?: string;
 }
 
-interface AIExplainEvent extends AIEventDataBase {
+interface AIExplainEvent extends AIEventDataSendBase {
 	type: 'change';
 	changeType: 'wip' | 'stash' | 'commit' | 'branch' | `draft-${'patch' | 'stash' | 'suggested_pr_change'}`;
 }
 
-export interface AIGenerateChangelogEventData extends AIEventDataBase {
+export interface AIGenerateChangelogEventData extends AIEventDataSendBase {
 	type: 'changelog';
 }
 
-export interface AIGenerateCommitMessageEventData extends AIEventDataBase {
+export interface AIGenerateCommitMessageEventData extends AIEventDataSendBase {
 	type: 'commitMessage';
 }
 
-export interface AIGenerateCreatePullRequestEventData extends AIEventDataBase {
+export interface AIGenerateCreatePullRequestEventData extends AIEventDataSendBase {
 	type: 'createPullRequest';
 }
 
-export interface AIGenerateCreateDraftEventData extends AIEventDataBase {
+export interface AIGenerateCreateDraftEventData extends AIEventDataSendBase {
 	type: 'draftMessage';
 	draftType: 'patch' | 'stash' | 'suggested_pr_change';
 }
 
-export interface AIGenerateRebaseEventData extends AIEventDataBase {
-	type: 'rebase';
+export interface AIGenerateCommitsEventData extends AIEventDataSendBase {
+	type: 'commits';
 }
 
-export interface AIGenerateSearchQueryEventData extends AIEventDataBase {
+export interface AIGenerateSearchQueryEventData extends AIEventDataSendBase {
 	type: 'searchQuery';
 }
 
-export interface AIGenerateStashMessageEventData extends AIEventDataBase {
+export interface AIGenerateStashMessageEventData extends AIEventDataSendBase {
 	type: 'stashMessage';
 }
 
@@ -390,13 +559,72 @@ type AIGenerateEvent =
 	| AIGenerateCommitMessageEventData
 	| AIGenerateCreateDraftEventData
 	| AIGenerateCreatePullRequestEventData
-	| AIGenerateRebaseEventData
+	| AIGenerateCommitsEventData
 	| AIGenerateSearchQueryEventData
 	| AIGenerateStashMessageEventData;
 
 export type AISwitchModelEvent =
 	| { 'model.id': string; 'model.provider.id': AIProviders; 'model.provider.name': string }
 	| { failed: true };
+
+export type AIFeedbackUnhelpfulReasons =
+	| 'suggestionInaccurate'
+	| 'notRelevant'
+	| 'missedImportantContext'
+	| 'unclearOrPoorlyFormatted'
+	| 'genericOrRepetitive'
+	| 'other';
+
+export interface AIFeedbackEvent extends AIEventDataBase {
+	/** The AI feature that feedback was submitted for */
+	type: AIActionType;
+	feature: string;
+	sentiment: 'helpful' | 'unhelpful';
+	/** Unhelpful reasons selected (if any) - comma-separated list of AIFeedbackUnhelpfulReasons values */
+	'unhelpful.reasons'?: string;
+	/** Custom feedback provided (if any) */
+	'unhelpful.custom'?: string;
+}
+
+export interface CLIInstallStartedEvent {
+	source?: Sources;
+	autoInstall: boolean;
+	attempts: number;
+	insiders: boolean;
+}
+
+export interface CLIInstallSucceededEvent {
+	autoInstall: boolean;
+	attempts: number;
+	source?: Sources;
+	version?: string;
+	insiders: boolean;
+}
+
+export interface CLIInstallFailedEvent {
+	autoInstall: boolean;
+	attempts: number;
+	'error.message'?: string;
+	source?: Sources;
+	insiders: boolean;
+}
+
+export interface MCPSetupStartedEvent {
+	source: Sources;
+}
+
+export interface MCPSetupCompletedEvent {
+	source: Sources;
+	'cli.version'?: string;
+	requiresUserCompletion: boolean;
+}
+
+export interface MCPSetupFailedEvent {
+	source: Sources;
+	reason: string;
+	'cli.version'?: string;
+	'error.message'?: string;
+}
 
 interface CloudIntegrationsConnectingEvent {
 	'integration.ids': string | undefined;
@@ -515,12 +743,41 @@ interface CoreCommandEvent {
 	command: string;
 }
 
-type CommitDetailsShownEvent = WebviewShownEventData & InspectShownEventData;
+type DetailsShownEvent = WebviewShownEventData & InspectShownEventData;
 
-type CommitDetailsModeChangedEvent = InspectContextEventData & {
+type DetailsModeChangedEvent = InspectContextEventData & {
 	'mode.old': 'wip' | 'commit';
 	'mode.new': 'wip' | 'commit';
 };
+
+interface DetailsReachabilityLoadedEvent {
+	'refs.count': number;
+	duration: number;
+}
+
+interface DetailsReachabilityFailedEvent {
+	duration: number;
+	'failed.reason': 'git-error' | 'timeout' | 'unknown';
+	'failed.error'?: string;
+}
+
+interface CommitSignedEvent {
+	format: 'gpg' | 'ssh' | 'x509' | 'openpgp';
+}
+
+interface CommitSigningFailedEvent {
+	reason: 'noKey' | 'gpgNotFound' | 'sshNotFound' | 'passphraseFailed' | 'unknown';
+	format: 'gpg' | 'ssh' | 'x509' | 'openpgp';
+}
+
+interface CommitSigningSetupEvent {
+	format: 'gpg' | 'ssh' | 'x509' | 'openpgp';
+	keyGenerated: boolean;
+}
+
+interface CommitSigningSetupWizardOpenedEvent {
+	alreadyConfigured: boolean;
+}
 
 export type FeaturePreviewDayEventData = Record<`day.${number}.startedOn`, string>;
 export type FeaturePreviewEventData = {
@@ -532,6 +789,16 @@ export type FeaturePreviewEventData = {
 export type FeaturePreviewActionEventData = {
 	action: `start-preview-trial:${FeaturePreviews}`;
 } & FeaturePreviewEventData;
+
+type GitCommandType = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'stash-apply' | 'stash-pop';
+
+interface GitCommandRunEvent {
+	command: GitCommandType;
+}
+
+interface GitCommandConflictEvent {
+	command: GitCommandType;
+}
 
 type GraphContextEventData = WebviewTelemetryContext & Partial<RepositoryContext>;
 export type GraphTelemetryContext = GraphContextEventData;
@@ -598,12 +865,6 @@ interface GraphSearchedEvent extends GraphContextEventData {
 	'failed.error.detail'?: string;
 }
 
-type GraphDetailsShownEvent = WebviewShownEventData & InspectShownEventData;
-type GraphDetailsModeChangedEvent = InspectContextEventData & {
-	'mode.old': 'wip' | 'commit';
-	'mode.new': 'wip' | 'commit';
-};
-
 export type HomeTelemetryContext = WebviewTelemetryContext & {
 	'context.preview': string | undefined;
 };
@@ -611,6 +872,12 @@ export type HomeTelemetryContext = WebviewTelemetryContext & {
 interface HomePreviewToggledEvent {
 	enabled: boolean;
 	version: string;
+}
+
+interface HomeFailedEvent {
+	reason: 'subscription';
+	error: string;
+	'error.detail'?: string;
 }
 
 type InspectWipContextEventData = {
@@ -636,6 +903,121 @@ type InspectShownEventData = InspectContextEventData & FlattenedContextConfig<Co
 
 export type InspectTelemetryContext = InspectContextEventData;
 export type InspectShownTelemetryContext = InspectShownEventData;
+
+export type ComposerTelemetryContext = ComposerContextEventData;
+type ComposerContextEventData = WebviewTelemetryContext & ComposerSessionContextEventData;
+type ComposerContextSessionData = {
+	'context.session.start': string;
+	'context.session.duration': number | undefined;
+};
+type ComposerContextDiffData = {
+	'context.diff.files.count': number;
+	'context.diff.hunks.count': number;
+	'context.diff.lines.count': number;
+	'context.diff.hash': string;
+	'context.diff.staged.exists': boolean;
+	'context.diff.unstaged.exists': boolean;
+	'context.diff.unstaged.included': boolean;
+};
+type ComposerContextCommitsData = {
+	'context.commits.initialCount': number;
+	'context.commits.autoComposedCount': number | undefined;
+	'context.commits.composedCount': number | undefined;
+	'context.commits.finalCount': number | undefined;
+};
+type ComposerContextOnboardingData = {
+	'context.onboarding.dismissed': boolean;
+	'context.onboarding.stepReached': number | undefined;
+};
+type ComposerContextAIData = {
+	'context.ai.enabled.org': boolean;
+	'context.ai.enabled.config': boolean;
+	'context.ai.model.id': string | undefined;
+	'context.ai.model.name': string | undefined;
+	'context.ai.model.provider.id': AIProviders | undefined;
+	'context.ai.model.temperature': number | undefined;
+	'context.ai.model.maxTokens.input': number | undefined;
+	'context.ai.model.maxTokens.output': number | undefined;
+	'context.ai.model.default': boolean | undefined;
+	'context.ai.model.hidden': boolean | undefined;
+};
+type ComposerContextOperationData = {
+	'context.operations.generateCommits.count': number;
+	'context.operations.generateCommits.cancelled.count': number;
+	'context.operations.generateCommits.error.count': number;
+	'context.operations.generateCommits.feedback.upvote.count': number;
+	'context.operations.generateCommits.feedback.downvote.count': number;
+	'context.operations.generateCommitMessage.count': number;
+	'context.operations.generateCommitMessage.cancelled.count': number;
+	'context.operations.generateCommitMessage.error.count': number;
+	'context.operations.finishAndCommit.error.count': number;
+	'context.operations.undo.count': number;
+	'context.operations.redo.count': number;
+	'context.operations.reset.count': number;
+};
+type ComposerContextWarningsData = {
+	'context.warnings.workingDirectoryChanged': boolean;
+	'context.warnings.indexChanged': boolean;
+};
+type ComposerContextErrorsData = {
+	'context.errors.safety.count': number;
+	'context.errors.operation.count': number;
+};
+
+type ComposerSessionContextEventData = ComposerContextSessionData &
+	ComposerContextDiffData &
+	ComposerContextCommitsData &
+	ComposerContextOnboardingData &
+	ComposerContextAIData &
+	ComposerContextOperationData &
+	ComposerContextWarningsData &
+	ComposerContextErrorsData & {
+		'context.source': Sources | undefined;
+		'context.mode': 'experimental' | 'preview';
+	};
+
+type ComposerEvent = ComposerContextEventData;
+
+type ComposerLoadedEvent = ComposerContextEventData &
+	Partial<{
+		'failure.reason': 'error';
+		'failure.error.message': string;
+	}>;
+
+type ComposerGenerateCommitsEvent = ComposerContextEventData & {
+	'customInstructions.used': boolean;
+	'customInstructions.length': number;
+	'customInstructions.hash': string;
+	'customInstructions.setting.used': boolean;
+	'customInstructions.setting.length': number;
+	'customInstructions.commitMessage.setting.used': boolean;
+	'customInstructions.commitMessage.setting.length': number;
+};
+
+type ComposerActionFailureEventData =
+	| {
+			'failure.reason': 'cancelled';
+			'failure.error.message'?: never;
+	  }
+	| {
+			'failure.reason': 'error';
+			'failure.error.message': string;
+	  };
+
+type ComposerGenerateCommitsFailedEvent = ComposerGenerateCommitsEvent & ComposerActionFailureEventData;
+
+type ComposerGenerateCommitMessageEvent = ComposerContextEventData & {
+	'customInstructions.setting.used': boolean;
+	'customInstructions.setting.length': number;
+	overwriteExistingMessage: boolean;
+};
+
+type ComposerGenerateCommitMessageFailedEvent = ComposerGenerateCommitMessageEvent & ComposerActionFailureEventData;
+
+type ComposerFinishAndCommitFailedEvent = ComposerContextEventData & {
+	'failure.reason': 'error';
+	'failure.error.message': string;
+};
 
 interface LaunchpadEventDataBase {
 	/** @order 1 */
@@ -743,6 +1125,38 @@ interface OpenReviewModeEvent {
 	source: Sources;
 }
 
+interface OperationGateDeadlockEvent {
+	key: string;
+	prop: string;
+	timeout: number;
+	/** Whether this is just a warning or the gate was forcibly cleared */
+	status: 'warning' | 'aborted';
+}
+
+interface OperationGitAbortedEvent {
+	operation: string;
+	duration: number;
+	timeout: number;
+	reason: 'timeout' | 'cancellation' | 'unknown';
+}
+
+interface OperationGitQueueWaitEvent {
+	/** Priority level of the command that waited */
+	priority: 'interactive' | 'normal' | 'background';
+	/** Time in ms the command waited in the queue before executing */
+	waitTime: number;
+	/** Number of active git processes when this command started */
+	active: number;
+	/** Number of interactive commands queued */
+	'queued.interactive': number;
+	/** Number of normal commands queued */
+	'queued.normal': number;
+	/** Number of background commands queued */
+	'queued.background': number;
+	/** Configured max concurrent processes */
+	maxConcurrent: number;
+}
+
 interface ProductConfigFailedEvent {
 	reason: 'fetch' | 'validation';
 	json: string | undefined;
@@ -753,6 +1167,89 @@ interface ProductConfigFailedEvent {
 interface ProvidersRegistrationCompleteEvent {
 	'config.git.autoRepositoryDetection': boolean | 'subFolders' | 'openEditors' | undefined;
 }
+
+export type RebaseEditorTelemetryContext = WebviewTelemetryContext & {
+	'context.ascending': boolean;
+	'context.todo.count': number | undefined;
+	'context.done.count': number | undefined;
+	'context.isRebasing': boolean | undefined;
+	'context.isPaused': boolean | undefined;
+	'context.preservesMerges': boolean | undefined;
+	'context.hasConflicts': boolean | undefined;
+	'context.session.start': string;
+};
+type RebaseEditorContextEventData = RebaseEditorTelemetryContext;
+
+type RebaseEditorCompletionEventData = RebaseEditorTelemetryContext & {
+	'context.session.duration': number;
+};
+
+type RebaseEditorShownEventData = RebaseEditorContextEventData & FlattenedContextConfig<Config['rebaseEditor']>;
+export type RebaseEditorShownTelemetryContext = RebaseEditorShownEventData;
+
+type RebaseEditorShownEvent = WebviewShownEventData & RebaseEditorShownEventData;
+
+interface RebaseEditorToggleOrderingEvent extends RebaseEditorContextEventData {
+	'ordering.old': 'asc' | 'desc';
+	'ordering.new': 'asc' | 'desc';
+}
+
+interface RebaseEditorRevealRefEvent extends RebaseEditorContextEventData {
+	/** Type of ref being revealed */
+	'ref.type': 'commit' | 'branch';
+	/** Where the ref is being revealed */
+	location: 'graph' | 'commitDetails';
+}
+
+interface RebaseEditorEntriesChangedEvent extends RebaseEditorContextEventData {
+	/** The new action applied */
+	action: string;
+	/** Number of entries changed */
+	count: number;
+}
+
+interface RebaseEditorEntriesMovedEvent extends RebaseEditorContextEventData {
+	/** Number of entries moved */
+	count: number;
+	/** Method used to move entries */
+	method: 'drag' | 'keyboard';
+}
+
+interface RebaseEditorConflictsDetectedEvent extends RebaseEditorContextEventData {
+	/** Duration of conflict detection in milliseconds */
+	duration: number;
+	/** Result status */
+	status: 'clean' | 'conflicts';
+	/** Number of commits checked */
+	'commits.count': number;
+	/** Number of conflicting commits (only when status is 'conflicts') */
+	'commits.conflicting'?: number;
+}
+
+interface RebaseEditorConflictsFailedEvent extends RebaseEditorContextEventData {
+	/** Duration before failure in milliseconds */
+	duration: number;
+	/** Number of commits that were being checked */
+	'commits.count': number;
+	/** Error message */
+	error?: string;
+}
+
+export type RebaseEditorTelemetryEvent =
+	| 'rebaseEditor/action/start'
+	| 'rebaseEditor/action/abort'
+	| 'rebaseEditor/action/continue'
+	| 'rebaseEditor/action/skip'
+	| 'rebaseEditor/action/switchToText'
+	| 'rebaseEditor/action/toggleOrdering'
+	| 'rebaseEditor/action/recompose'
+	| 'rebaseEditor/action/showConflicts'
+	| 'rebaseEditor/action/revealRef'
+	| 'rebaseEditor/entries/changed'
+	| 'rebaseEditor/entries/moved'
+	| 'rebaseEditor/conflicts/detecting'
+	| 'rebaseEditor/conflicts/detected'
+	| 'rebaseEditor/conflicts/failed';
 
 interface RemoteProvidersConnectedEvent {
 	'hostingProvider.provider': IntegrationIds;
@@ -795,6 +1292,8 @@ type RepositoryContributorsDistributionEventData = {
 
 interface RepositoryOpenedEvent extends RepositoryEventData, RepositoryContributorsDistributionEventData {
 	'repository.remoteProviders': string;
+	'repository.submodules.openedCount': number;
+	'repository.worktrees.openedCount': number;
 	'repository.contributors.commits.count': number | undefined;
 	'repository.contributors.commits.avgPerContributor': number | undefined;
 	'repository.contributors.count': number | undefined;
@@ -804,6 +1303,35 @@ interface RepositoryOpenedEvent extends RepositoryEventData, RepositoryContribut
 interface RepositoryVisibilityEvent extends Partial<RepositoryEventData> {
 	'repository.visibility': 'private' | 'public' | 'local' | undefined;
 }
+
+interface StartReviewEventDataBase {
+	/** @order 1 */
+	instance: number;
+}
+
+interface StartReviewEventData extends StartReviewEventDataBase {
+	'items.count'?: number;
+}
+export type StartReviewTelemetryContext = StartReviewEventData;
+
+type StartReviewConnectedEventData = StartReviewEventData & {
+	connected: boolean;
+};
+
+type StartReviewPrActionEvent = StartReviewConnectedEventData & {
+	action: 'soft-open';
+} & Partial<Record<`item.${string}`, string | number | boolean>>;
+
+type StartReviewPrChosenEvent = StartReviewConnectedEventData &
+	Partial<Record<`item.${string}`, string | number | boolean>>;
+
+type StartReviewTitleActionEvent = StartReviewConnectedEventData & {
+	action: 'connect';
+};
+
+type StartReviewActionEvent = StartReviewConnectedEventData & {
+	action: 'manage' | 'connect';
+};
 
 interface StartWorkEventDataBase {
 	/** @order 1 */
@@ -844,7 +1372,8 @@ export type SubscriptionFeaturePreviewsEventData = {
 }[FeaturePreviews];
 
 export interface SubscriptionCurrentEventData
-	extends Flatten<Omit<SubscriptionAccount, 'name' | 'email'>, 'account', true>,
+	extends
+		Flatten<Omit<SubscriptionAccount, 'name' | 'email'>, 'account', true>,
 		Omit<
 			Flatten<Subscription['plan'], 'subscription', true>,
 			'subscription.actual.name' | 'subscription.effective.name'
@@ -852,7 +1381,8 @@ export interface SubscriptionCurrentEventData
 		SubscriptionFeaturePreviewsEventData {}
 
 export interface SubscriptionPreviousEventData
-	extends Flatten<Omit<SubscriptionAccount, 'name' | 'email'>, 'previous.account', true>,
+	extends
+		Flatten<Omit<SubscriptionAccount, 'name' | 'email'>, 'previous.account', true>,
 		Omit<
 			Flatten<Subscription['plan'], 'previous.subscription', true>,
 			'previous.subscription.actual.name' | 'previous.subscription.effective.name'
@@ -897,8 +1427,7 @@ type SubscriptionActionEventData =
 	| FeaturePreviewActionEventData;
 
 export interface SubscriptionEventDataWithPrevious
-	extends SubscriptionEventData,
-		Partial<SubscriptionPreviousEventData> {}
+	extends SubscriptionEventData, Partial<SubscriptionPreviousEventData> {}
 
 type TimelineContextEventData = WebviewTelemetryContext & {
 	'context.period': TimelinePeriod | undefined;
@@ -934,6 +1463,7 @@ interface UsageTrackEvent {
 
 interface WalkthroughEvent {
 	step?: WalkthroughSteps;
+	usingFallbackUrl?: boolean;
 }
 
 type WalkthroughActionNames =
@@ -941,21 +1471,18 @@ type WalkthroughActionNames =
 	| 'open/ai-enable-setting'
 	| 'open/ai-settings'
 	| 'open/help-center/ai-features'
-	| 'open/help-center/start-integrations'
 	| 'open/help-center/accelerate-pr-reviews'
-	| 'open/help-center/streamline-collaboration'
 	| 'open/help-center/interactive-code-history'
 	| 'open/help-center/community-vs-pro'
-	| 'open/help-center/home-view'
 	| 'open/devex-platform'
 	| 'open/drafts'
-	| 'open/home'
 	| 'connect/integrations'
-	| 'open/autolinks'
+	| 'open/composer'
 	| 'open/graph'
 	| 'open/launchpad'
 	| 'create/worktree'
 	| 'open/help-center'
+	| 'plus/login'
 	| 'plus/sign-up'
 	| 'plus/upgrade'
 	| 'plus/reactivate'
@@ -971,6 +1498,25 @@ interface WalkthroughCompletionEvent {
 	'context.key': WalkthroughContextKeys;
 }
 
+type WelcomeActionNames =
+	| 'dismiss'
+	| 'open/composer'
+	| 'open/graph'
+	| 'open/home-view'
+	| 'open/help-center'
+	| 'open/help-center/community-vs-pro'
+	| 'open/launchpad'
+	| 'plus/login'
+	| 'plus/reactivate'
+	| 'plus/sign-up'
+	| 'plus/upgrade'
+	| 'shown';
+
+type WelcomeActionEvent =
+	| { name: 'shown' | 'dismiss'; viewedCarouselPages?: number; proButtonClicked?: boolean }
+	| { type: 'command'; name: WelcomeActionNames; command: string }
+	| { type: 'url'; name: WelcomeActionNames; url: string };
+
 type WebviewContextEventData = {
 	'context.webview.id': string;
 	'context.webview.type': string;
@@ -985,7 +1531,7 @@ type WebviewShownEventData = WebviewContextEventData & {
 };
 
 /** Remaps TelemetryEvents to remove the host webview context when the event is sent from a webview app itself (not the host) */
-export type TelemetryEventsFromWebviewApp = {
+export type WebviewTelemetryEvents = {
 	[K in keyof TelemetryEvents]: Omit<
 		TelemetryEvents[K],
 		keyof (K extends `commitDetails/${string}` | `graphDetails/${string}`
@@ -994,29 +1540,39 @@ export type TelemetryEventsFromWebviewApp = {
 				? GraphTelemetryContext
 				: K extends `timeline/${string}`
 					? TimelineTelemetryContext
-					: WebviewTelemetryContext)
+					: K extends `composer/${string}`
+						? ComposerTelemetryContext
+						: K extends `rebaseEditor/${string}`
+							? RebaseEditorTelemetryContext
+							: WebviewTelemetryContext)
 	>;
 };
 
 export type LoginContext = 'start_trial';
-export type ConnectIntegrationContext = 'launchpad';
+export type ConnectIntegrationContext = 'launchpad' | 'mcp';
 export type Context = LoginContext | ConnectIntegrationContext;
 /** Used to provide a "source context" to gk.dev for both tracking and customization purposes */
-export type TrackingContext = 'graph' | 'launchpad' | 'visual_file_history' | 'worktrees';
+export type TrackingContext = 'graph' | 'launchpad' | 'mcp' | 'visual_file_history' | 'worktrees';
 
 export type Sources =
 	| 'account'
 	| 'ai'
+	| 'ai:markdown-preview'
+	| 'ai:markdown-editor'
 	| 'ai:picker'
 	| 'associateIssueWithBranch'
 	| 'cloud-patches'
 	| 'code-suggest'
 	| 'commandPalette'
+	| 'composer'
 	| 'deeplink'
 	| 'editor:hover'
 	| 'feature-badge'
 	| 'feature-gate'
+	| 'gk-cli-integration'
+	| 'gk-mcp-provider'
 	| 'graph'
+	| 'graph-details'
 	| 'home'
 	| 'inspect'
 	| 'inspect-overview'
@@ -1024,6 +1580,8 @@ export type Sources =
 	| 'launchpad'
 	| 'launchpad-indicator'
 	| 'launchpad-view'
+	| 'mcp'
+	| 'mcp-welcome-message'
 	| 'merge-target'
 	| 'notification'
 	| 'patchDetails'
@@ -1031,24 +1589,34 @@ export type Sources =
 	| 'quick-wizard'
 	| 'rebaseEditor'
 	| 'remoteProvider'
+	| 'scm'
 	| 'scm-input'
 	| 'settings'
+	| 'startReview'
 	| 'startWork'
+	| 'statusbar:hover'
 	| 'subscription'
 	| 'timeline'
 	| 'trial-indicator'
 	| 'view'
+	| 'view:hover'
 	| 'walkthrough'
+	| 'welcome'
 	| 'whatsnew'
 	| 'worktrees';
 
 export type Source = {
 	source: Sources;
+	correlationId?: string;
 	detail?: string | TelemetryEventData;
 };
 
 export const sourceToContext: { [source in Sources]?: Context } = {
 	launchpad: 'launchpad',
+};
+
+export const detailToContext: { [detail in string]?: Context } = {
+	mcp: 'mcp',
 };
 
 export type TrackedUsage = {
@@ -1057,12 +1625,23 @@ export type TrackedUsage = {
 	lastUsedAt: number;
 };
 
+/**
+ * Actions that happen without a command
+ */
+export type TrackedGlActions =
+	| 'gitlens.ai.generateCommits'
+	| 'gitlens.mcp.ipcRequest'
+	| 'gitlens.mcp.chatInteraction'
+	| 'gitlens.mcp.bundledMcpDefinitionProvided';
+
 export type TrackedUsageFeatures =
-	| `${WebviewTypes}Webview`
+	| `${WebviewPanelTypes}Webview`
 	| `${TreeViewTypes | WebviewViewTypes}View`
 	| `${CustomEditorTypes}Editor`;
 export type WalkthroughUsageKeys = 'home:walkthrough:dismissed';
+type TrackedUsageCommandKeys = `command:${GlCommands | GlCommandsDeprecated}:executed`;
 export type TrackedUsageKeys =
 	| `${TrackedUsageFeatures}:shown`
-	| `command:${GlCommands | GlCommandsDeprecated}:executed`
+	| `action:${TrackedGlActions}:happened`
+	| TrackedUsageCommandKeys
 	| WalkthroughUsageKeys;

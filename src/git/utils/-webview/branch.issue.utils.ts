@@ -1,19 +1,19 @@
 import type { CancellationToken } from 'vscode';
-import type { GitConfigKeys } from '../../../constants';
-import type { Container } from '../../../container';
-import type { GitConfigEntityIdentifier } from '../../../plus/integrations/providers/models';
+import type { GkConfigKeys } from '../../../constants.js';
+import type { Container } from '../../../container.js';
+import type { GitConfigEntityIdentifier } from '../../../plus/integrations/providers/models.js';
 import {
 	decodeEntityIdentifiersFromGitConfig,
 	encodeIssueOrPullRequestForGitConfig,
 	getIssueFromGitConfigEntityIdentifier,
-} from '../../../plus/integrations/providers/utils';
-import { Logger } from '../../../system/logger';
-import type { MaybePausedResult } from '../../../system/promise';
-import { getSettledValue, pauseOnCancelOrTimeout } from '../../../system/promise';
-import type { GitBranch } from '../../models/branch';
-import type { Issue } from '../../models/issue';
-import type { GitBranchReference } from '../../models/reference';
-import type { IssueResourceDescriptor, RepositoryDescriptor } from '../../models/resourceDescriptor';
+} from '../../../plus/integrations/providers/utils.js';
+import { Logger } from '../../../system/logger.js';
+import type { MaybePausedResult } from '../../../system/promise.js';
+import { getSettledValue, pauseOnCancelOrTimeout } from '../../../system/promise.js';
+import type { GitBranch } from '../../models/branch.js';
+import type { Issue } from '../../models/issue.js';
+import type { GitBranchReference } from '../../models/reference.js';
+import type { IssueResourceDescriptor, RepositoryDescriptor } from '../../models/resourceDescriptor.js';
 
 export async function addAssociatedIssueToBranch(
 	container: Container,
@@ -36,7 +36,7 @@ export async function addAssociatedIssueToBranch(
 		associatedIssues.push(encodeIssueOrPullRequestForGitConfig(issue, owner));
 		await container.git
 			.getRepositoryService(branch.repoPath)
-			.config.setConfig?.(key, JSON.stringify(associatedIssues));
+			.config.setGkConfig?.(key, JSON.stringify(associatedIssues));
 	} catch (ex) {
 		Logger.error(ex, 'addAssociatedIssueToBranch');
 	}
@@ -98,11 +98,11 @@ export async function removeAssociatedIssueFromBranch(
 			: [];
 		associatedIssues = associatedIssues.filter(i => i.entityId !== id);
 		if (associatedIssues.length === 0) {
-			await container.git.getRepositoryService(branch.repoPath).config.setConfig?.(key, undefined);
+			await container.git.getRepositoryService(branch.repoPath).config.setGkConfig?.(key, undefined);
 		} else {
 			await container.git
 				.getRepositoryService(branch.repoPath)
-				.config.setConfig?.(key, JSON.stringify(associatedIssues));
+				.config.setGkConfig?.(key, JSON.stringify(associatedIssues));
 		}
 	} catch (ex) {
 		Logger.error(ex, 'removeAssociatedIssueFromBranch');
@@ -112,8 +112,8 @@ export async function removeAssociatedIssueFromBranch(
 async function getConfigKeyAndEncodedAssociatedIssuesForBranch(
 	container: Container,
 	branch: GitBranchReference,
-): Promise<{ key: GitConfigKeys; encoded: string | undefined }> {
-	const key = `branch.${branch.name}.gk-associated-issues` satisfies GitConfigKeys;
-	const encoded = await container.git.getRepositoryService(branch.repoPath).config.getConfig?.(key);
+): Promise<{ key: GkConfigKeys; encoded: string | undefined }> {
+	const key = `branch.${branch.name}.gk-associated-issues` satisfies GkConfigKeys;
+	const encoded = await container.git.getRepositoryService(branch.repoPath).config.getGkConfig?.(key);
 	return { key: key, encoded: encoded };
 }

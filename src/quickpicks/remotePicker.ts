@@ -1,10 +1,10 @@
 import type { Disposable } from 'vscode';
 import { window } from 'vscode';
-import { SetRemoteAsDefaultQuickInputButton } from '../commands/quickCommand.buttons';
-import type { GitRemote } from '../git/models/remote';
-import { getQuickPickIgnoreFocusOut } from '../system/-webview/vscode';
-import type { RemoteQuickPickItem } from './items/gitWizard';
-import { createRemoteQuickPickItem } from './items/gitWizard';
+import { SetRemoteAsDefaultQuickInputButton } from '../commands/quick-wizard/quickButtons.js';
+import type { GitRemote } from '../git/models/remote.js';
+import { getQuickPickIgnoreFocusOut } from '../system/-webview/vscode.js';
+import type { RemoteQuickPickItem } from './items/gitWizard.js';
+import { createRemoteQuickPickItem } from './items/gitWizard.js';
 
 export async function showRemotePicker(
 	title: string | undefined,
@@ -38,7 +38,7 @@ export async function showRemotePicker(
 		for (const r of remotes) {
 			items.push(createRemoteQuickPickItem(r, undefined, pickOpts));
 			if (r.name === options?.picked) {
-				picked = items[items.length - 1];
+				picked = items.at(-1);
 			}
 		}
 	}

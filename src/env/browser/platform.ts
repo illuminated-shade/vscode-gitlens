@@ -1,6 +1,7 @@
-import type { Platform } from '../node/platform';
+import type { Platform } from '../node/platform.js';
 
 export const isWeb = true;
+export const isOffline = false;
 
 const _platform = (navigator as any)?.userAgentData?.platform;
 const _userAgent = navigator.userAgent;
@@ -23,4 +24,12 @@ export function getTempFile(filename: string): string {
 export function getAltKeySymbol(): string {
 	if (isMac) return '⌥';
 	return 'Alt';
+}
+
+/**
+ * Returns an identifier for the current remote instance.
+ * Not applicable in browser environment.
+ */
+export function getRemoteInstanceIdentifier(): string | undefined {
+	return undefined;
 }

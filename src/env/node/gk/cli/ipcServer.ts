@@ -1,17 +1,19 @@
 import type { IncomingMessage, Server, ServerResponse } from 'http';
 import { createServer } from 'http';
 import type { Disposable } from 'vscode';
-import { log } from '../../../../system/decorators/log';
-import { Logger } from '../../../../system/logger';
-import { getLogScope } from '../../../../system/logger.scope';
-import { createDisposable } from '../../../../system/unifiedDisposable';
+import { uuid } from '@env/crypto.js';
+import { debug } from '../../../../system/decorators/log.js';
+import { Logger } from '../../../../system/logger.js';
+import { getScopedLogger } from '../../../../system/logger.scope.js';
+import { createDisposable } from '../../../../system/unifiedDisposable.js';
 
 export interface IpcHandler<Request = unknown, Response = void> {
-	(request: Request): Promise<Response>;
+	(request: Request | undefined): Promise<Response>;
 }
 
 export async function createIpcServer<Request = unknown, Response = void>(): Promise<IpcServer<Request, Response>> {
 	const server = createServer();
+	const token = uuid();
 
 	return new Promise<IpcServer<Request, Response>>((resolve, reject) => {
 		try {
@@ -29,8 +31,9 @@ export async function createIpcServer<Request = unknown, Response = void>(): Pro
 					return;
 				}
 
-				const serverUrl = `http://127.0.0.1:${address.port}`;
-				resolve(new IpcServer(serverUrl, server));
+				const port = address.port;
+				const serverUrl = `http://127.0.0.1:${port}`;
+				resolve(new IpcServer(serverUrl, port, token, server));
 			});
 		} catch (ex) {
 			// eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
@@ -44,11 +47,13 @@ export class IpcServer<Request = unknown, Response = void> implements Disposable
 
 	constructor(
 		readonly ipcAddress: string,
+		readonly ipcPort: number,
+		readonly ipcToken: string,
 		private server: Server,
 	) {
 		server
 			.on('listening', () => {
-				Logger.debug(`Cli Integration IPC server listening on ${this.ipcAddress}`);
+				Logger.trace(`Cli Integration IPC server listening on ${this.ipcAddress}`);
 			})
 			.on('request', this.onRequest.bind(this));
 	}
@@ -63,14 +68,31 @@ export class IpcServer<Request = unknown, Response = void> implements Disposable
 		return createDisposable(() => this.handlers.delete(`/${name}`));
 	}
 
-	@log({ args: false })
+	@debug({ args: false })
 	private onRequest(req: IncomingMessage, res: ServerResponse): void {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
-		const handler = this.handlers.get(req.url);
+		// Parse URL to extract pathname for routing, separating from query parameters
+		let pathname: string | undefined;
+		try {
+			pathname = new URL(req.url ?? '', this.ipcAddress).pathname;
+		} catch {
+			pathname = req.url;
+		}
+
+		const handler = this.handlers.get(pathname);
 		if (handler == null) {
-			Logger.warn(scope, `IPC handler for ${req.url} not found`);
+			scope?.warn(`IPC handler for ${pathname} not found`);
 			res.writeHead(404);
+			res.end();
+			return;
+		}
+
+		// Add bearer token authorization
+		const authHeader = req.headers['authorization'];
+		if (authHeader !== `Bearer ${this.ipcToken}`) {
+			Logger.warn(scope, `IPC handler for ${req.url} unauthorized`);
+			res.writeHead(401);
 			res.end();
 			return;
 		}
@@ -78,7 +100,8 @@ export class IpcServer<Request = unknown, Response = void> implements Disposable
 		const chunks: Uint8Array[] = [];
 		req.on('data', d => chunks.push(d));
 		req.on('end', async () => {
-			const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+			const body = Buffer.concat(chunks).toString('utf8');
+			const data = body ? (JSON.parse(body) as Request) : undefined;
 			try {
 				const result = await handler(data);
 				if (result == null) {
@@ -95,7 +118,7 @@ export class IpcServer<Request = unknown, Response = void> implements Disposable
 					res.end(JSON.stringify(result));
 				}
 			} catch (ex) {
-				Logger.error(ex, 'IPC handler error', data);
+				scope?.error(ex, 'IPC handler error', data);
 				res.writeHead(500);
 				res.end();
 			}

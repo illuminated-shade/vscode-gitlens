@@ -1,13 +1,14 @@
 import type { Uri } from 'vscode';
-import type { WorktreeGitCommandArgs } from '../../commands/git/worktree';
-import { Container } from '../../container';
-import type { OpenWorkspaceLocation } from '../../system/-webview/vscode/workspaces';
-import { defer } from '../../system/promise';
-import type { ViewNode } from '../../views/nodes/abstract/viewNode';
-import { executeGitCommand } from '../actions';
-import type { GitReference } from '../models/reference';
-import type { Repository } from '../models/repository';
-import type { GitWorktree } from '../models/worktree';
+import type { WorktreeOpenState } from '../../commands/git/worktree/open.js';
+import { Container } from '../../container.js';
+import type { OpenWorkspaceLocation } from '../../system/-webview/vscode/workspaces.js';
+import { defer } from '../../system/promise.js';
+import type { ViewNode } from '../../views/nodes/abstract/viewNode.js';
+import type { RevealOptions } from '../../views/viewBase.js';
+import { executeGitCommand } from '../actions.js';
+import type { GitReference } from '../models/reference.js';
+import type { Repository } from '../models/repository.js';
+import type { GitWorktree } from '../models/worktree.js';
 
 export async function create(
 	repo?: string | Repository,
@@ -47,13 +48,7 @@ export function copyChangesToWorktree(
 ): Promise<void> {
 	return executeGitCommand({
 		command: 'worktree',
-		state: {
-			subcommand: 'copy-changes',
-			repo: repo,
-			source: source,
-			target: target,
-			changes: { type: type },
-		},
+		state: { subcommand: 'copy-changes', repo: repo, source: source, target: target, changes: { type: type } },
 	});
 }
 
@@ -80,17 +75,11 @@ export function remove(repo?: string | Repository, uris?: Uri[]): Promise<void> 
 	});
 }
 
-export function reveal(
-	worktree: GitWorktree,
-	options?: { select?: boolean; focus?: boolean; expand?: boolean | number },
-): Promise<ViewNode | undefined> {
+export function revealWorktree(worktree: GitWorktree, options?: RevealOptions): Promise<ViewNode | undefined> {
 	return Container.instance.views.revealWorktree(worktree, options);
 }
 
-type OpenFlags = Extract<
-	NonNullable<Required<WorktreeGitCommandArgs['state']>>,
-	{ subcommand: 'open' }
->['flags'][number];
+type OpenFlags = WorktreeOpenState['flags'][number];
 
 export function convertLocationToOpenFlags(location: OpenWorkspaceLocation): OpenFlags[];
 export function convertLocationToOpenFlags(location: OpenWorkspaceLocation | undefined): OpenFlags[] | undefined;

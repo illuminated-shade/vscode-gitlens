@@ -1,19 +1,19 @@
 import type { Event, Selection, TextEditor, TextEditorSelectionChangeEvent } from 'vscode';
 import { Disposable, EventEmitter, window } from 'vscode';
-import type { Container } from '../container';
-import type { GitCommit } from '../git/models/commit';
-import { isTrackableTextEditor } from '../system/-webview/vscode/editors';
-import { debug } from '../system/decorators/log';
-import type { Deferrable } from '../system/function/debounce';
-import { debounce } from '../system/function/debounce';
-import { getLogScope, setLogScopeExit } from '../system/logger.scope';
+import type { Container } from '../container.js';
+import type { GitCommit } from '../git/models/commit.js';
+import { isTrackableTextEditor } from '../system/-webview/vscode/editors.js';
+import { trace } from '../system/decorators/log.js';
+import type { Deferrable } from '../system/function/debounce.js';
+import { debounce } from '../system/function/debounce.js';
+import { getScopedLogger } from '../system/logger.scope.js';
 import type {
 	DocumentBlameStateChangeEvent,
 	DocumentContentChangeEvent,
 	DocumentDirtyIdleTriggerEvent,
 	DocumentDirtyStateChangeEvent,
 	GitDocumentTracker,
-} from './documentTracker';
+} from './documentTracker.js';
 
 export interface LinesChangeEvent {
 	readonly editor: TextEditor | undefined;
@@ -71,19 +71,19 @@ export class LineTracker {
 		}
 	}
 
-	@debug<LineTracker['onBlameStateChanged']>({
-		args: {
-			0: e => `editor/doc=${e.editor?.document.uri.toString(true)}, blameable=${e.blameable}`,
-		},
+	@trace({
+		args: e => ({
+			e: `editor/doc=${e.editor?.document.uri.toString(true)}, blameable=${e.blameable}`,
+		}),
 	})
 	private onBlameStateChanged(_e: DocumentBlameStateChangeEvent) {
 		this.notifyLinesChanged('editor');
 	}
 
-	@debug<LineTracker['onContentChanged']>({
-		args: {
-			0: e => `editor/doc=${e.editor.document.uri.toString(true)}`,
-		},
+	@trace({
+		args: e => ({
+			e: `editor/doc=${e.editor.document.uri.toString(true)}`,
+		}),
 	})
 	private onContentChanged(e: DocumentContentChangeEvent) {
 		if (
@@ -100,19 +100,19 @@ export class LineTracker {
 		}
 	}
 
-	@debug<LineTracker['onDirtyIdleTriggered']>({
-		args: {
-			0: e => `editor/doc=${e.editor.document.uri.toString(true)}`,
-		},
+	@trace({
+		args: e => ({
+			e: `editor/doc=${e.editor.document.uri.toString(true)}`,
+		}),
 	})
 	private onDirtyIdleTriggered(_e: DocumentDirtyIdleTriggerEvent) {
 		this.resume();
 	}
 
-	@debug<LineTracker['onDirtyStateChanged']>({
-		args: {
-			0: e => `editor/doc=${e.editor.document.uri.toString(true)}, dirty=${e.dirty}`,
-		},
+	@trace({
+		args: e => ({
+			e: `editor/doc=${e.editor.document.uri.toString(true)}, dirty=${e.dirty}`,
+		}),
 	})
 	private onDirtyStateChanged(e: DocumentDirtyStateChangeEvent) {
 		if (e.dirty) {
@@ -191,7 +191,7 @@ export class LineTracker {
 		this.notifyLinesChanged('editor');
 	}
 
-	@debug()
+	@trace()
 	resume(options?: { force?: boolean; silent?: boolean }): void {
 		if (!options?.force && !this._suspended) return;
 
@@ -203,7 +203,7 @@ export class LineTracker {
 		}
 	}
 
-	@debug()
+	@trace()
 	suspend(options?: { force?: boolean; silent?: boolean }): void {
 		if (!options?.force && this._suspended) return;
 
@@ -220,9 +220,9 @@ export class LineTracker {
 		return this._subscriptions.has(subscriber);
 	}
 
-	@debug({ args: false, singleLine: true })
+	@trace({ args: false, onlyExit: true })
 	subscribe(subscriber: unknown, subscription: Disposable): Disposable {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const disposable = {
 			dispose: () => this.unsubscribe(subscriber),
@@ -239,7 +239,7 @@ export class LineTracker {
 		}
 
 		if (first) {
-			setLogScopeExit(scope, ' \u2022 starting line tracker...');
+			scope?.addExitInfo('starting line tracker...');
 
 			this.resume({ force: true, silent: true });
 
@@ -254,13 +254,13 @@ export class LineTracker {
 
 			queueMicrotask(() => this.onActiveTextEditorChanged(window.activeTextEditor));
 		} else {
-			setLogScopeExit(scope, ' \u2022 already started...');
+			scope?.addExitInfo('already started...');
 		}
 
 		return disposable;
 	}
 
-	@debug({ args: false, singleLine: true })
+	@trace({ args: false, onlyExit: true })
 	unsubscribe(subscriber: unknown): void {
 		const subs = this._subscriptions.get(subscriber);
 		if (subs == null) return;
@@ -305,18 +305,16 @@ export class LineTracker {
 			return;
 		}
 
-		if (this._fireLinesChangedDebounced == null) {
-			this._fireLinesChangedDebounced = debounce((e: LinesChangeEvent) => {
-				if (e.editor !== window.activeTextEditor) return;
+		this._fireLinesChangedDebounced ??= debounce((e: LinesChangeEvent) => {
+			if (e.editor !== window.activeTextEditor) return;
 
-				// Make sure we are still on the same lines
-				if (!isIncluded(e.selections, toLineSelections(e.editor?.selections))) {
-					return;
-				}
+			// Make sure we are still on the same lines
+			if (!isIncluded(e.selections, toLineSelections(e.editor?.selections))) {
+				return;
+			}
 
-				void this.fireLinesChanged(e);
-			}, 250);
-		}
+			void this.fireLinesChanged(e);
+		}, 250);
 
 		// If we have no pending moves, then fire an immediate pending event, and defer the real event
 		if (!this._fireLinesChangedDebounced.pending()) {
@@ -326,15 +324,15 @@ export class LineTracker {
 		this._fireLinesChangedDebounced(e);
 	}
 
-	@debug<LineTracker['updateState']>({
-		args: { 0: selections => selections?.map(s => s.active).join(','), 1: e => e.document.uri.toString(true) },
+	@trace({
+		args: (selections, editor) => ({ selections: selections?.map(s => s.active).join(','), editor: editor }),
 		exit: true,
 	})
 	private async updateState(selections: LineSelection[], editor: TextEditor): Promise<boolean> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		if (!this.includes(selections)) {
-			setLogScopeExit(scope, ` \u2022 lines no longer match`);
+			scope?.addExitInfo(`lines no longer match`);
 
 			return false;
 		}
@@ -342,7 +340,7 @@ export class LineTracker {
 		const document = await this.documentTracker.getOrAdd(editor.document);
 		let status = await document.getStatus();
 		if (!status.blameable) {
-			setLogScopeExit(scope, ` \u2022 document is not blameable`);
+			scope?.addExitInfo(`document is not blameable`);
 
 			return false;
 		}
@@ -354,7 +352,7 @@ export class LineTracker {
 				editor?.document,
 			);
 			if (blameLine == null) {
-				setLogScopeExit(scope, ` \u2022 blame failed`);
+				scope?.addExitInfo(`blame failed`);
 
 				return false;
 			}
@@ -367,7 +365,7 @@ export class LineTracker {
 		} else {
 			const blame = await this.container.git.getBlame(document.uri, editor.document);
 			if (blame == null) {
-				setLogScopeExit(scope, ` \u2022 blame failed`);
+				scope?.addExitInfo(`blame failed`);
 
 				return false;
 			}
@@ -391,7 +389,7 @@ export class LineTracker {
 		// Check again because of the awaits above
 
 		if (!this.includes(selections)) {
-			setLogScopeExit(scope, ` \u2022 lines no longer match`);
+			scope?.addExitInfo(`lines no longer match`);
 
 			return false;
 		}
@@ -399,7 +397,7 @@ export class LineTracker {
 		status = await document.getStatus();
 
 		if (!status.blameable) {
-			setLogScopeExit(scope, ` \u2022 document is not blameable`);
+			scope?.addExitInfo(`document is not blameable`);
 
 			return false;
 		}
@@ -414,7 +412,7 @@ export class LineTracker {
 
 function isIncluded(selections: LineSelection[] | undefined, within: LineSelection[] | undefined): boolean {
 	if (selections == null && within == null) return true;
-	if (selections == null || within == null || selections.length !== within.length) return false;
+	if (selections == null || selections.length !== within?.length) return false;
 
 	return selections.every((s, i) => {
 		const match = within[i];

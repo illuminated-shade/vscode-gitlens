@@ -1,21 +1,22 @@
 /* eslint-disable @typescript-eslint/no-restricted-imports -- TODO need to deal with sharing rich class shapes to webviews */
-import { GitCloudHostIntegrationId } from '../../constants.integrations';
-import type { Container } from '../../container';
-import type { GitHostIntegration } from '../../plus/integrations/models/gitHostIntegration';
+import { GitCloudHostIntegrationId } from '../../constants.integrations.js';
+import type { Container } from '../../container.js';
+import type { GitHostIntegration } from '../../plus/integrations/models/gitHostIntegration.js';
 import {
 	getIntegrationConnectedKey,
 	getIntegrationIdForRemote,
-} from '../../plus/integrations/utils/-webview/integration.utils';
-import { memoize } from '../../system/decorators/-webview/memoize';
-import { getLoggableName } from '../../system/logger';
-import { equalsIgnoreCase } from '../../system/string';
-import { parseGitRemoteUrl } from '../parsers/remoteParser';
-import type { RemoteProvider } from '../remotes/remoteProvider';
+} from '../../plus/integrations/utils/-webview/integration.utils.js';
+import { loggable } from '../../system/decorators/log.js';
+import { memoize } from '../../system/decorators/memoize.js';
+import { equalsIgnoreCase } from '../../system/string.js';
+import { parseGitRemoteUrl } from '../parsers/remoteParser.js';
+import type { RemoteProvider } from '../remotes/remoteProvider.js';
 
 export function isRemote(remote: unknown): remote is GitRemote {
 	return remote instanceof GitRemote;
 }
 
+@loggable(i => i.id)
 export class GitRemote<TProvider extends RemoteProvider | undefined = RemoteProvider | undefined> {
 	constructor(
 		private readonly container: Container,
@@ -27,10 +28,6 @@ export class GitRemote<TProvider extends RemoteProvider | undefined = RemoteProv
 		public readonly provider: TProvider,
 		public readonly urls: { type: GitRemoteType; url: string }[],
 	) {}
-
-	toString(): string {
-		return `${getLoggableName(this)}(${this.id})`;
-	}
 
 	get default(): boolean {
 		const defaultRemote = this.container.storage.getWorkspace('remote:default');
@@ -51,7 +48,7 @@ export class GitRemote<TProvider extends RemoteProvider | undefined = RemoteProv
 	get maybeIntegrationConnected(): boolean | undefined {
 		if (!this.provider?.id) return false;
 
-		const integrationId = getIntegrationIdForRemote(this);
+		const integrationId = getIntegrationIdForRemote(this.provider);
 		if (integrationId == null) return false;
 
 		// Special case for GitHub, since we support the legacy GitHub integration
@@ -96,16 +93,14 @@ export class GitRemote<TProvider extends RemoteProvider | undefined = RemoteProv
 				return remoteUrl.url;
 			}
 
-			if (bestUrl == null) {
-				bestUrl = remoteUrl.url;
-			}
+			bestUrl ??= remoteUrl.url;
 		}
 
 		return bestUrl!;
 	}
 
 	async getIntegration(): Promise<GitHostIntegration | undefined> {
-		const integrationId = getIntegrationIdForRemote(this);
+		const integrationId = getIntegrationIdForRemote(this.provider);
 		return integrationId && this.container.integrations.get(integrationId, this.provider?.domain);
 	}
 
@@ -125,7 +120,23 @@ export class GitRemote<TProvider extends RemoteProvider | undefined = RemoteProv
 	}
 
 	supportsIntegration(): this is GitRemote<RemoteProvider> {
-		return Boolean(getIntegrationIdForRemote(this));
+		return Boolean(getIntegrationIdForRemote(this.provider));
+	}
+
+	/** Creates a copy of this remote with a different repoPath — ONLY used for worktree-aware caching */
+	withRepoPath(repoPath: string): GitRemote<TProvider> {
+		return repoPath === this.repoPath
+			? this
+			: new GitRemote<TProvider>(
+					this.container,
+					repoPath,
+					this.name,
+					this.scheme,
+					this._domain,
+					this._path,
+					this.provider,
+					this.urls,
+				);
 	}
 }
 

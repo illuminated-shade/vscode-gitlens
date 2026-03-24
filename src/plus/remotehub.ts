@@ -1,7 +1,7 @@
 import type { Uri } from 'vscode';
 import { extensions } from 'vscode';
-import { ExtensionNotFoundError } from '../errors';
-import { Logger } from '../system/logger';
+import { ExtensionNotFoundError } from '../errors.js';
+import { Logger } from '../system/logger.js';
 
 export async function getRemoteHubApi(): Promise<RemoteHubApi>;
 // eslint-disable-next-line @typescript-eslint/unified-signatures
@@ -13,7 +13,7 @@ export async function getRemoteHubApi(silent?: boolean): Promise<RemoteHubApi | 
 			extensions.getExtension<RemoteHubApi>('ms-vscode.remote-repositories') ??
 			extensions.getExtension<RemoteHubApi>('GitHub.remotehub');
 		if (extension == null) {
-			Logger.log('GitHub Repositories extension is not installed or enabled');
+			Logger.info('GitHub Repositories extension is not installed or enabled');
 			throw new ExtensionNotFoundError('GitHub Repositories', 'GitHub.remotehub');
 		}
 

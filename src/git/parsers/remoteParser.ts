@@ -1,9 +1,9 @@
-import type { Container } from '../../container';
-import { maybeStopWatch } from '../../system/stopwatch';
-import { iterateByDelimiter } from '../../system/string';
-import type { GitRemoteType } from '../models/remote';
-import { GitRemote } from '../models/remote';
-import type { getRemoteProviderMatcher } from '../remotes/remoteProviders';
+import type { Container } from '../../container.js';
+import { maybeStopWatch } from '../../system/stopwatch.js';
+import { iterateByDelimiter } from '../../system/string.js';
+import type { GitRemoteType } from '../models/remote.js';
+import { GitRemote } from '../models/remote.js';
+import type { getRemoteProviderMatcher } from '../remotes/remoteProviders.js';
 
 export function parseGitRemotes(
 	container: Container,
@@ -11,7 +11,7 @@ export function parseGitRemotes(
 	repoPath: string,
 	remoteProviderMatcher: Awaited<ReturnType<typeof getRemoteProviderMatcher>>,
 ): GitRemote[] {
-	using sw = maybeStopWatch(`Git.parseRemotes(${repoPath})`, { log: false, logLevel: 'debug' });
+	using sw = maybeStopWatch(`Git.parseRemotes(${repoPath})`, { log: { onlyExit: true, level: 'debug' } });
 	if (!data) {
 		sw?.stop({ suffix: ` no data` });
 		return [];
@@ -91,6 +91,7 @@ export function parseGitRemotes(
 	return [...remotes.values()];
 }
 
+export const gitSuffixRegex = /\.git\/?$/;
 // Test git urls
 /*
 http://host.xz/user/project.git
@@ -138,6 +139,6 @@ export function parseGitRemoteUrl(url: string): [scheme: string, domain: string,
 	return [
 		match[1] || match[3] || match[6],
 		match[2] || match[4] || match[5] || match[7] || match[8],
-		match[9].replace(/\.git\/?$/, ''),
+		match[9].replace(gitSuffixRegex, ''),
 	];
 }

@@ -1,31 +1,29 @@
 import type { CancellationToken } from 'vscode';
-import type { Container } from '../../../../container';
-import type { GitCache } from '../../../../git/cache';
-import type { GitRemotesSubProvider } from '../../../../git/gitProvider';
-import type { GitRemote } from '../../../../git/models/remote';
-import { parseGitRemotes } from '../../../../git/parsers/remoteParser';
-import { getRemoteProviderMatcher, loadRemoteProviders } from '../../../../git/remotes/remoteProviders';
-import { RemotesGitProviderBase } from '../../../../git/sub-providers/remotes';
-import { sortRemotes } from '../../../../git/utils/-webview/sorting';
-import { configuration } from '../../../../system/-webview/configuration';
-import { gate } from '../../../../system/decorators/-webview/gate';
-import { log } from '../../../../system/decorators/log';
-import { Logger } from '../../../../system/logger';
-import { getLogScope } from '../../../../system/logger.scope';
-import type { Git } from '../git';
-import type { LocalGitProvider } from '../localGitProvider';
+import type { Container } from '../../../../container.js';
+import type { GitCache } from '../../../../git/cache.js';
+import type { GitRemotesSubProvider } from '../../../../git/gitProvider.js';
+import type { GitRemote } from '../../../../git/models/remote.js';
+import { parseGitRemotes } from '../../../../git/parsers/remoteParser.js';
+import { getRemoteProviderMatcher, loadRemoteProvidersFromConfig } from '../../../../git/remotes/remoteProviders.js';
+import { RemotesGitProviderBase } from '../../../../git/sub-providers/remotes.js';
+import { sortRemotes } from '../../../../git/utils/-webview/sorting.js';
+import { gate } from '../../../../system/decorators/gate.js';
+import { debug } from '../../../../system/decorators/log.js';
+import { getScopedLogger } from '../../../../system/logger.scope.js';
+import type { Git } from '../git.js';
+import type { LocalGitProviderInternal } from '../localGitProvider.js';
 
 export class RemotesGitSubProvider extends RemotesGitProviderBase implements GitRemotesSubProvider {
 	constructor(
 		container: Container,
 		private readonly git: Git,
 		cache: GitCache,
-		provider: LocalGitProvider,
+		provider: LocalGitProviderInternal,
 	) {
 		super(container, cache, provider);
 	}
 
-	@log({ args: { 1: false } })
+	@debug({ args: repoPath => ({ repoPath: repoPath }) })
 	async getRemotes(
 		repoPath: string | undefined,
 		options?: { filter?: (remote: GitRemote) => boolean; sort?: boolean },
@@ -33,38 +31,34 @@ export class RemotesGitSubProvider extends RemotesGitProviderBase implements Git
 	): Promise<GitRemote[]> {
 		if (repoPath == null) return [];
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
-		let remotesPromise = this.cache.remotes?.get(repoPath);
-		if (remotesPromise == null) {
-			async function load(this: RemotesGitSubProvider): Promise<GitRemote[]> {
-				const providers = loadRemoteProviders(
-					configuration.get('remotes', this.container.git.getRepository(repoPath!)?.folder?.uri ?? null),
-					await this.container.integrations.getConfigured(),
+		let remotes = await this.cache.getRemotes(repoPath, async (commonPath, cacheable) => {
+			const providers = loadRemoteProvidersFromConfig(
+				this.container.git.getRepository(repoPath)?.folder?.uri ?? null,
+				await this.container.integrations.getConfigured(),
+			);
+
+			try {
+				const result = await this.git.exec(
+					{ cwd: repoPath, caching: { cache: this.cache.gitResults, commonPath: commonPath } },
+					'remote',
+					'-v',
 				);
 
-				try {
-					const result = await this.git.exec({ cwd: repoPath }, 'remote', '-v');
-					const remotes = parseGitRemotes(
-						this.container,
-						result.stdout,
-						repoPath!,
-						await getRemoteProviderMatcher(this.container, providers),
-					);
-					return remotes;
-				} catch (ex) {
-					this.cache.remotes?.delete(repoPath!);
-					Logger.error(ex, scope);
-					return [];
-				}
+				return parseGitRemotes(
+					this.container,
+					result.stdout,
+					commonPath,
+					await getRemoteProviderMatcher(this.container, providers),
+				);
+			} catch (ex) {
+				cacheable?.invalidate();
+				scope?.error(ex);
+				return [];
 			}
+		});
 
-			remotesPromise = load.call(this);
-
-			this.cache.remotes?.set(repoPath, remotesPromise);
-		}
-
-		let remotes = await remotesPromise;
 		if (options?.filter != null) {
 			remotes = remotes.filter(options.filter);
 		}
@@ -77,14 +71,14 @@ export class RemotesGitSubProvider extends RemotesGitProviderBase implements Git
 	}
 
 	@gate()
-	@log()
+	@debug()
 	async addRemote(repoPath: string, name: string, url: string, options?: { fetch?: boolean }): Promise<void> {
 		await this.git.exec({ cwd: repoPath }, 'remote', 'add', options?.fetch ? '-f' : undefined, name, url);
 		this.container.events.fire('git:cache:reset', { repoPath: repoPath, types: ['remotes'] });
 	}
 
 	@gate()
-	@log()
+	@debug()
 	async addRemoteWithResult(
 		repoPath: string,
 		name: string,
@@ -97,14 +91,14 @@ export class RemotesGitSubProvider extends RemotesGitProviderBase implements Git
 	}
 
 	@gate()
-	@log()
+	@debug()
 	async pruneRemote(repoPath: string, name: string): Promise<void> {
 		await this.git.exec({ cwd: repoPath }, 'remote', 'prune', name);
 		this.container.events.fire('git:cache:reset', { repoPath: repoPath, types: ['remotes'] });
 	}
 
 	@gate()
-	@log()
+	@debug()
 	async removeRemote(repoPath: string, name: string): Promise<void> {
 		await this.git.exec({ cwd: repoPath }, 'remote', 'remove', name);
 		this.container.events.fire('git:cache:reset', { repoPath: repoPath, types: ['remotes'] });

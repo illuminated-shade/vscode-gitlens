@@ -1,6 +1,7 @@
-import type { IssueOrPullRequest, IssueOrPullRequestState } from './issueOrPullRequest';
-import type { ProviderReference } from './remoteProvider';
-import type { RepositoryIdentityDescriptor } from './repositoryIdentities';
+import { loggable } from '../../system/decorators/log.js';
+import type { IssueOrPullRequest, IssueOrPullRequestState } from './issueOrPullRequest.js';
+import type { ProviderReference } from './remoteProvider.js';
+import type { RepositoryIdentityDescriptor } from './repositoryIdentities.js';
 
 export function isIssue(issue: unknown): issue is Issue {
 	return issue instanceof Issue;
@@ -15,6 +16,7 @@ export interface IssueShape extends IssueOrPullRequest {
 	project?: IssueProject;
 }
 
+@loggable(i => i.id)
 export class Issue implements IssueShape {
 	readonly type = 'issue';
 
@@ -37,6 +39,7 @@ export class Issue implements IssueShape {
 		public readonly thumbsUpCount?: number,
 		public readonly body?: string,
 		public readonly project?: IssueProject,
+		public readonly number?: string,
 	) {}
 }
 

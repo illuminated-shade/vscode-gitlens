@@ -19,11 +19,14 @@ async function buildTests(target) {
 	/** @type BuildOptions | WatchOptions */
 	const config = {
 		bundle: true,
-		entryPoints: ['src/**/__tests__/**/*.test.ts'],
+		entryPoints: ['src/**/__tests__/**/*.test.ts', 'src/**/__tests__/**/*.benchmark.ts'],
 		entryNames: '[dir]/[name]',
 		external: ['vscode'],
 		format: 'cjs',
 		logLevel: 'info',
+		logOverride: {
+			'duplicate-case': 'silent',
+		},
 		mainFields: target === 'webworker' ? ['browser', 'module', 'main'] : ['module', 'main'],
 		metafile: false,
 		minify: false,

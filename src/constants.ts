@@ -6,6 +6,8 @@ export const previewBadge = 'ᴘʀᴇᴠɪᴇᴡ';
 export const proBadge = 'ᴘʀᴏ';
 export const proBadgeSuperscript = 'ᴾᴿᴼ';
 
+export const whitespaceRegex = /\s/;
+
 export type AnnotationStatus = 'computing' | 'computed';
 
 export const enum CharCode {
@@ -47,15 +49,40 @@ export const enum CharCode {
 	z = 122,
 }
 
+export type GitCoreConfigKeys =
+	| 'commit.gpgsign'
+	| 'core.excludesFile'
+	| 'diff.guitool'
+	| 'diff.tool'
+	| 'gpg.format'
+	| 'gpg.program'
+	| 'gpg.ssh.program'
+	| 'gpg.ssh.allowedSignersFile'
+	| 'init.defaultBranch'
+	| 'user.signingkey';
+
 export type GitConfigKeys =
+	| GitCoreConfigKeys
+	/** `vscode-merge-base` — value determined by VS Code that is used to determine the merge base for the current branch. Once `gk-merge-base` is determined, we stop using `vscode-merge-base` */
 	| `branch.${string}.vscode-merge-base`
-	| `branch.${string}.gk-merge-base`
-	| `branch.${string}.gk-merge-target`
-	| `branch.${string}.gk-merge-target-user`
-	| `branch.${string}.gk-associated-issues`
+	/** `github-pr-owner-number` — value determined by VS Code/GitHub PR extension that is used to determine the PR number for the current branch */
 	| `branch.${string}.github-pr-owner-number`;
 
-export type DeprecatedGitConfigKeys = `branch.${string}.gk-target-base`;
+export type GkConfigKeys =
+	/** `gk-merge-base` — the branch that the current branch was created from (the original base at branch creation time) */
+	| `branch.${string}.gk-merge-base`
+	/** `gk-merge-target` — the auto-detected branch that the current branch will likely be merged into (used for comparisons, PR targets, etc.) */
+	| `branch.${string}.gk-merge-target`
+	/** `gk-merge-target-user` — user-specified merge target branch; takes precedence over auto-detected `gk-merge-target` */
+	| `branch.${string}.gk-merge-target-user`
+	/** `gk-associated-issues` — JSON array of issue/PR entity identifiers linked to this branch */
+	| `branch.${string}.gk-associated-issues`
+	/** `gk-last-accessed` — ISO 8601 timestamp of when the branch was last checked out or viewed */
+	| `branch.${string}.gk-last-accessed`
+	/** `gk-last-modified` — ISO 8601 timestamp of when the branch last received a commit */
+	| `branch.${string}.gk-last-modified`;
+
+export type DeprecatedGkConfigKeys = `branch.${string}.gk-target-base`;
 
 export const enum GlyphChars {
 	AngleBracketLeftHeavy = '\u2770',
@@ -137,7 +164,7 @@ export const enum Schemes {
 	Git = 'git',
 	GitHub = 'github',
 	GitLens = 'gitlens',
-	GitLensMarkdown = 'gitlens-markdown',
+	GitLensAIMarkdown = 'gitlens-ai-markdown',
 	PRs = 'pr',
 	Remote = 'vscode-remote',
 	Vsls = 'vsls',
@@ -179,6 +206,7 @@ export const urls = Object.freeze({
 	githubDiscussions: `https://github.com/gitkraken/vscode-gitlens/discussions/?${utm}`,
 	helpCenter: `https://help.gitkraken.com/gitlens/gitlens-start-here/?${utm}`,
 	helpCenterHome: `https://help.gitkraken.com/gitlens/home-view/?${utm}`,
+	helpCenterMCP: `https://help.gitkraken.com/mcp/mcp-getting-started/?${utm}`,
 	releaseNotes: `https://help.gitkraken.com/gitlens/gitlens-release-notes-current/?${utm}`,
 
 	acceleratePrReviews: `https://help.gitkraken.com/gitlens/gitlens-start-here/?${utm}#accelerate-pr-reviews`,
@@ -186,8 +214,13 @@ export const urls = Object.freeze({
 	homeView: `https://help.gitkraken.com/gitlens/home-view/?${utm}&utm_campaign=walkthrough`,
 	interactiveCodeHistory: `https://help.gitkraken.com/gitlens/gitlens-start-here/?${utm}#interactive-code-history`,
 	startIntegrations: `https://help.gitkraken.com/gitlens/gitlens-start-here/?${utm}#improve-workflows-with-integrations`,
-	streamlineCollaboration: `https://help.gitkraken.com/gitlens/gitlens-start-here/?${utm}#streamline-collaboration`,
 	aiFeatures: `https://help.gitkraken.com/gitlens/gl-gk-ai/?${utm}`,
+
+	getStarted: `https://help.gitkraken.com/gitlens/gitlens-home/?${utm}`,
+	welcomeInTrial: `https://help.gitkraken.com/gitlens/gitlens-home/?${utm}`,
+	welcomePaid: `https://help.gitkraken.com/gitlens/gitlens-home/?${utm}`,
+	welcomeTrialExpired: `https://help.gitkraken.com/gitlens/gitlens-community-vs-gitlens-pro/?${utm}`,
+	welcomeTrialReactivationEligible: `https://help.gitkraken.com/gitlens/gitlens-community-vs-gitlens-pro/?${utm}`,
 });
 
 export type WalkthroughSteps =
@@ -198,5 +231,4 @@ export type WalkthroughSteps =
 	| 'get-started-community'
 	| 'visualize-code-history'
 	| 'accelerate-pr-reviews'
-	| 'streamline-collaboration'
 	| 'improve-workflows-with-integrations';

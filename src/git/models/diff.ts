@@ -1,5 +1,5 @@
-import type { GitFileChange, GitFileChangeShape } from './fileChange';
-import type { GitRevisionRangeNotation } from './revision';
+import type { GitFileChange, GitFileChangeShape } from './fileChange.js';
+import type { GitRevisionRangeNotation } from './revision.js';
 
 export interface GitDiff {
 	readonly contents: string;
@@ -38,6 +38,13 @@ export interface ParsedGitDiff {
 
 export interface ParsedGitDiffFile extends Omit<GitFileChangeShape, 'repoPath'>, ParsedGitDiffHunks {
 	readonly header: string;
+	readonly metadata: ParsedGitDiffFileMetadata;
+}
+
+export interface ParsedGitDiffFileMetadata {
+	readonly binary: boolean;
+	readonly modeChanged: false | { oldMode: string; newMode: string };
+	readonly renamedOrCopied: false | { similarity: number | undefined };
 }
 
 export interface ParsedGitDiffHunks {

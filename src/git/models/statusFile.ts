@@ -1,18 +1,20 @@
 /* eslint-disable @typescript-eslint/no-restricted-imports -- TODO need to deal with sharing rich class shapes to webviews */
 import type { Uri } from 'vscode';
-import type { Container } from '../../container';
-import { memoize } from '../../system/decorators/-webview/memoize';
-import { getGitFileFormattedDirectory, getGitFileFormattedPath } from '../utils/-webview/file.utils';
-import { getPseudoCommits } from '../utils/-webview/statusFile.utils';
-import { getGitFileStatusText } from '../utils/fileStatus.utils';
-import type { GitCommit } from './commit';
-import type { GitFile } from './file';
-import { GitFileChange } from './fileChange';
-import type { GitFileStatus } from './fileStatus';
-import { GitFileConflictStatus, GitFileIndexStatus, GitFileWorkingTreeStatus } from './fileStatus';
-import { uncommittedStaged } from './revision';
-import type { GitUser } from './user';
+import type { Container } from '../../container.js';
+import { loggable } from '../../system/decorators/log.js';
+import { memoize } from '../../system/decorators/memoize.js';
+import { getGitFileFormattedDirectory, getGitFileFormattedPath } from '../utils/-webview/file.utils.js';
+import { getPseudoCommits } from '../utils/-webview/statusFile.utils.js';
+import { getGitFileStatusText } from '../utils/fileStatus.utils.js';
+import type { GitCommit } from './commit.js';
+import type { GitFile } from './file.js';
+import { GitFileChange } from './fileChange.js';
+import type { GitFileStatus } from './fileStatus.js';
+import { GitFileConflictStatus, GitFileIndexStatus, GitFileWorkingTreeStatus } from './fileStatus.js';
+import { uncommittedStaged } from './revision.js';
+import type { GitUser } from './user.js';
 
+@loggable(i => i.path)
 export class GitStatusFile implements GitFile {
 	public readonly conflictStatus: GitFileConflictStatus | undefined;
 	public readonly indexStatus: GitFileIndexStatus | undefined;
@@ -25,6 +27,7 @@ export class GitStatusFile implements GitFile {
 		y: string | undefined,
 		public readonly path: string,
 		public readonly originalPath?: string,
+		public readonly submodule?: { readonly oid: string; readonly previousOid?: string } | undefined,
 	) {
 		if (x != null && y != null) {
 			switch (x + y) {
@@ -68,6 +71,9 @@ export class GitStatusFile implements GitFile {
 					break;
 				case 'M':
 					this.indexStatus = GitFileIndexStatus.Modified;
+					break;
+				case 'T':
+					this.indexStatus = GitFileIndexStatus.TypeChanged;
 					break;
 				case 'R':
 					this.indexStatus = GitFileIndexStatus.Renamed;
@@ -131,6 +137,8 @@ export class GitStatusFile implements GitFile {
 	}
 
 	getPseudoFileChanges(): GitFileChange[] {
+		const mode = this.submodule != null ? '160000' : undefined;
+
 		if (this.conflicted) {
 			return [
 				new GitFileChange(
@@ -142,6 +150,9 @@ export class GitStatusFile implements GitFile {
 					'HEAD',
 					undefined,
 					false,
+					undefined,
+					mode,
+					this.submodule,
 				),
 			];
 		}
@@ -153,7 +164,6 @@ export class GitStatusFile implements GitFile {
 			files.push(
 				new GitFileChange(
 					this.container,
-
 					this.repoPath,
 					this.path,
 					this.status,
@@ -161,6 +171,9 @@ export class GitStatusFile implements GitFile {
 					staged ? uncommittedStaged : 'HEAD',
 					undefined,
 					false,
+					undefined,
+					mode,
+					this.submodule,
 				),
 			);
 		}
@@ -176,6 +189,9 @@ export class GitStatusFile implements GitFile {
 					'HEAD',
 					undefined,
 					true,
+					undefined,
+					mode,
+					this.submodule,
 				),
 			);
 		}

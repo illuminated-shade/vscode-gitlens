@@ -1,5 +1,5 @@
 import { css } from 'lit';
-import { focusOutline } from './a11y.css';
+import { focusOutline } from './a11y.css.js';
 
 export const elementBase = css`
 	:host {
@@ -12,6 +12,12 @@ export const elementBase = css`
 	}
 	[hidden] {
 		display: none !important;
+	}
+`;
+
+export const boxSizingBase = css`
+	* {
+		box-sizing: border-box;
 	}
 `;
 

@@ -3,76 +3,69 @@ import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import type { CancellationToken } from 'vscode';
 import { Uri } from 'vscode';
-import type { Container } from '../../../../container';
-import type { GitCache } from '../../../../git/cache';
-import { GitErrorHandling } from '../../../../git/commandOptions';
-import {
-	WorktreeCreateError,
-	WorktreeCreateErrorReason,
-	WorktreeDeleteError,
-	WorktreeDeleteErrorReason,
-} from '../../../../git/errors';
-import type { GitWorktreesSubProvider } from '../../../../git/gitProvider';
-import type { GitWorktree } from '../../../../git/models/worktree';
-import { parseGitWorktrees } from '../../../../git/parsers/worktreeParser';
-import { configuration } from '../../../../system/-webview/configuration';
-import { log } from '../../../../system/decorators/log';
-import { Logger } from '../../../../system/logger';
-import { getLogScope } from '../../../../system/logger.scope';
-import { joinPaths, normalizePath } from '../../../../system/path';
-import { getSettledValue } from '../../../../system/promise';
-import { interpolate } from '../../../../system/string';
-import type { Git } from '../git';
-import { GitErrors } from '../git';
-import type { LocalGitProvider } from '../localGitProvider';
-import { isWindows } from '../shell';
+import type { Container } from '../../../../container.js';
+import type { GitCache } from '../../../../git/cache.js';
+import { WorktreeCreateError, WorktreeDeleteError } from '../../../../git/errors.js';
+import type { GitWorktreesSubProvider } from '../../../../git/gitProvider.js';
+import type { GitWorktree } from '../../../../git/models/worktree.js';
+import { parseGitWorktrees } from '../../../../git/parsers/worktreeParser.js';
+import { configuration } from '../../../../system/-webview/configuration.js';
+import { debug } from '../../../../system/decorators/log.js';
+import { getScopedLogger } from '../../../../system/logger.scope.js';
+import { joinPaths, normalizePath } from '../../../../system/path.js';
+import { getSettledValue } from '../../../../system/promise.js';
+import { interpolate } from '../../../../system/string.js';
+import type { Git } from '../git.js';
+import { getGitCommandError } from '../git.js';
+import type { LocalGitProviderInternal } from '../localGitProvider.js';
+import { isWindows } from '../shell.js';
 
 export class WorktreesGitSubProvider implements GitWorktreesSubProvider {
 	constructor(
 		private readonly container: Container,
 		private readonly git: Git,
 		private readonly cache: GitCache,
-		private readonly provider: LocalGitProvider,
+		private readonly provider: LocalGitProviderInternal,
 	) {}
 
-	@log()
+	@debug()
 	async createWorktree(
 		repoPath: string,
 		path: string,
 		options?: { commitish?: string; createBranch?: string; detach?: boolean; force?: boolean },
 	): Promise<void> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
+
+		const args = ['worktree', 'add'];
+		if (options?.force) {
+			args.push('--force');
+		}
+		if (options?.createBranch) {
+			args.push('-b', options.createBranch);
+		}
+		if (options?.detach) {
+			args.push('--detach');
+		}
+		args.push(path);
+		if (options?.commitish) {
+			args.push(options.commitish);
+		}
 
 		try {
-			await this.git.exec(
-				{ cwd: repoPath },
-				'worktree',
-				'add',
-				options?.force ? '--force' : undefined,
-				...(options?.createBranch ? ['-b', options.createBranch] : []),
-				options?.detach ? '--detach' : undefined,
-				path,
-				options?.commitish || undefined,
-			);
+			await this.git.exec({ cwd: repoPath }, ...args);
 
 			this.container.events.fire('git:cache:reset', {
 				repoPath: repoPath,
 				types: options?.createBranch ? ['branches', 'worktrees'] : ['worktrees'],
 			});
 		} catch (ex) {
-			Logger.error(ex, scope);
-
-			const msg = String(ex);
-
-			if (GitErrors.alreadyCheckedOut.test(msg)) {
-				throw new WorktreeCreateError(WorktreeCreateErrorReason.AlreadyCheckedOut, ex);
-			}
-
-			if (GitErrors.alreadyExists.test(msg)) {
-				throw new WorktreeCreateError(WorktreeCreateErrorReason.AlreadyExists, ex);
-			}
-
-			throw new WorktreeCreateError(undefined, ex);
+			scope?.error(ex);
+			throw getGitCommandError(
+				'worktree-create',
+				ex,
+				reason =>
+					new WorktreeCreateError({ reason: reason, gitCommand: { repoPath: repoPath, args: args } }, ex),
+			);
 		}
 	}
 
@@ -86,7 +79,7 @@ export class WorktreesGitSubProvider implements GitWorktreesSubProvider {
 		return this.getWorktree(repoPath, w => normalizePath(w.uri.fsPath) === normalized);
 	}
 
-	@log()
+	@debug()
 	async getWorktree(
 		repoPath: string,
 		predicate: (w: GitWorktree) => boolean,
@@ -95,7 +88,7 @@ export class WorktreesGitSubProvider implements GitWorktreesSubProvider {
 		return (await this.getWorktrees(repoPath, cancellation)).find(predicate);
 	}
 
-	@log()
+	@debug()
 	async getWorktrees(repoPath: string, cancellation?: CancellationToken): Promise<GitWorktree[]> {
 		await this.git.ensureSupports(
 			'git:worktrees',
@@ -103,44 +96,31 @@ export class WorktreesGitSubProvider implements GitWorktreesSubProvider {
 			' Please install a more recent version of Git and try again.',
 		);
 
-		let worktrees = this.cache.worktrees?.get(repoPath);
-		if (worktrees == null) {
-			async function load(this: WorktreesGitSubProvider) {
-				try {
-					const [dataResult, branchesResult] = await Promise.allSettled([
-						this.git.exec({ cwd: repoPath, cancellation: cancellation }, 'worktree', 'list', '--porcelain'),
-						this.provider.branches.getBranches(repoPath, undefined, cancellation),
-					]);
+		return this.cache.getWorktrees(repoPath, async (commonPath, _cacheable) => {
+			const [dataResult, branchesResult] = await Promise.allSettled([
+				this.git.exec({ cwd: commonPath, cancellation: cancellation }, 'worktree', 'list', '--porcelain'),
+				// Use commonPath to get shared branches (repoPath=commonPath, current=false)
+				// The worktree mapper will remap branches to the requester's context
+				this.provider.branches.getBranches(commonPath, undefined, cancellation),
+			]);
 
-					return parseGitWorktrees(
-						this.container,
-						getSettledValue(dataResult)?.stdout,
-						repoPath,
-						getSettledValue(branchesResult)?.values ?? [],
-					);
-				} catch (ex) {
-					this.cache.worktrees?.delete(repoPath);
-
-					throw ex;
-				}
-			}
-
-			worktrees = load.call(this);
-
-			this.cache.worktrees?.set(repoPath, worktrees);
-		}
-
-		return worktrees;
+			return parseGitWorktrees(
+				this.container,
+				getSettledValue(dataResult)?.stdout,
+				commonPath,
+				getSettledValue(branchesResult)?.values ?? [],
+			);
+		});
 	}
 
-	@log()
-	async getWorktreesDefaultUri(repoPath: string): Promise<Uri | undefined> {
+	@debug()
+	getWorktreesDefaultUri(repoPath: string): Uri | undefined {
 		let defaultUri = this.getWorktreesDefaultUriCore(repoPath);
 		if (defaultUri != null) return defaultUri;
 
 		// If we don't have a default set, default it to the parent folder of the repo folder
 		const repo = this.container.git.getRepository(repoPath);
-		defaultUri = (await repo?.getCommonRepositoryUri()) ?? repo?.uri;
+		defaultUri = repo?.commonUri ?? repo?.uri;
 		if (defaultUri != null) {
 			defaultUri = Uri.joinPath(defaultUri, '..');
 		}
@@ -165,9 +145,9 @@ export class WorktreesGitSubProvider implements GitWorktreesSubProvider {
 		return this.provider.getAbsoluteUri(location, repoPath);
 	}
 
-	@log()
+	@debug()
 	async deleteWorktree(repoPath: string, path: string | Uri, options?: { force?: boolean }): Promise<void> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		await this.git.ensureSupports(
 			'git:worktrees',
@@ -175,33 +155,28 @@ export class WorktreesGitSubProvider implements GitWorktreesSubProvider {
 			' Please install a more recent version of Git and try again.',
 		);
 
+		const args = ['worktree', 'remove'];
+		if (options?.force) {
+			args.push('--force');
+		}
+
 		path = normalizePath(typeof path === 'string' ? path : path.fsPath);
+		args.push(path);
+
 		try {
-			await this.git.exec(
-				{ cwd: repoPath, errors: GitErrorHandling.Throw },
-				'worktree',
-				'remove',
-				options?.force ? '--force' : undefined,
-				path,
-			);
+			await this.git.exec({ cwd: repoPath, errors: 'throw' }, ...args);
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
+			const gitError = getGitCommandError(
+				'worktree-delete',
+				ex,
+				reason =>
+					new WorktreeDeleteError({ reason: reason, gitCommand: { repoPath: repoPath, args: args } }, ex),
+			);
 
-			const msg = String(ex);
-
-			if (GitErrors.mainWorkingTree.test(msg)) {
-				throw new WorktreeDeleteError(WorktreeDeleteErrorReason.DefaultWorkingTree, ex);
-			}
-
-			if (GitErrors.uncommittedChanges.test(msg)) {
-				throw new WorktreeDeleteError(WorktreeDeleteErrorReason.HasChanges, ex);
-			}
-
-			if (GitErrors.failedToDeleteDirectoryNotEmpty.test(msg)) {
-				Logger.warn(
-					scope,
+			if (gitError.details.reason === 'directoryNotEmpty') {
+				scope?.warn(
 					`Failed to fully delete worktree '${path}' because it is not empty. Attempting to delete it manually.`,
-					scope,
 				);
 				try {
 					await fs.rm(path, { force: true, recursive: true });
@@ -210,10 +185,8 @@ export class WorktreesGitSubProvider implements GitWorktreesSubProvider {
 					if (isWindows) {
 						const match = /EPERM: operation not permitted, unlink '(.*?)'/i.exec(ex.message);
 						if (match != null) {
-							Logger.warn(
-								scope,
+							scope?.warn(
 								`Failed to manually delete '${path}' because it is in use. Attempting to forcefully delete it.`,
-								scope,
 							);
 
 							function deleteInUseSymlink(symlink: string) {
@@ -236,21 +209,14 @@ export class WorktreesGitSubProvider implements GitWorktreesSubProvider {
 								await fs.rm(path, { force: true, recursive: true, maxRetries: 1, retryDelay: 1 });
 								return;
 							} catch (ex) {
-								Logger.error(
-									ex,
-									scope,
-									`Failed to forcefully delete '${path}' because it is in use.`,
-									scope,
-								);
+								scope?.error(ex, `Failed to forcefully delete '${path}' because it is in use.`);
 							}
 						}
 					}
-
-					throw new WorktreeDeleteError(WorktreeDeleteErrorReason.DirectoryNotEmpty, ex);
 				}
 			}
 
-			throw new WorktreeDeleteError(undefined, ex);
+			throw gitError;
 		} finally {
 			this.container.events.fire('git:cache:reset', { repoPath: repoPath, types: ['worktrees'] });
 		}

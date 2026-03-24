@@ -1,18 +1,18 @@
 import type { CancellationToken, Disposable, Position, TextDocument, TextEditor } from 'vscode';
 import { Hover, languages, Range } from 'vscode';
-import type { FileAnnotationType } from '../config';
-import type { Container } from '../container';
-import { GitUri } from '../git/gitUri';
-import type { GitBlame } from '../git/models/blame';
-import type { GitCommit } from '../git/models/commit';
-import { changesMessage, detailsMessage } from '../hovers/hovers';
-import { configuration } from '../system/-webview/configuration';
-import { log } from '../system/decorators/log';
-import type { TrackedGitDocument } from '../trackers/trackedDocument';
-import type { DidChangeStatusCallback } from './annotationProvider';
-import { AnnotationProviderBase } from './annotationProvider';
-import type { ComputedHeatmap } from './annotations';
-import { getHeatmapColors } from './annotations';
+import type { FileAnnotationType } from '../config.js';
+import type { Container } from '../container.js';
+import { GitUri } from '../git/gitUri.js';
+import type { GitBlame } from '../git/models/blame.js';
+import type { GitCommit } from '../git/models/commit.js';
+import { changesMessage, detailsMessage } from '../hovers/hovers.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { debug } from '../system/decorators/log.js';
+import type { TrackedGitDocument } from '../trackers/trackedDocument.js';
+import type { DidChangeStatusCallback } from './annotationProvider.js';
+import { AnnotationProviderBase } from './annotationProvider.js';
+import type { ComputedHeatmap } from './annotations.js';
+import { getHeatmapColors } from './annotations.js';
 
 const maxSmallIntegerV8 = 2 ** 30 - 1; // Max number that can be stored in V8's smis (small integers)
 
@@ -59,7 +59,7 @@ export abstract class BlameAnnotationProviderBase extends AnnotationProviderBase
 		return blame;
 	}
 
-	@log({ args: false })
+	@debug({ args: false })
 	protected getComputedHeatmap(blame: GitBlame): ComputedHeatmap {
 		const dates: Date[] = [];
 
@@ -111,7 +111,7 @@ export abstract class BlameAnnotationProviderBase extends AnnotationProviderBase
 			Array.isArray(lookupTable)
 				? lookupTable
 				: unified
-					? lookupTable.hot.concat(lookupTable.cold)
+					? [...lookupTable.hot, ...lookupTable.cold]
 					: date.getTime() < coldThresholdTimestamp
 						? lookupTable.cold
 						: lookupTable.hot;
@@ -184,6 +184,7 @@ export abstract class BlameAnnotationProviderBase extends AnnotationProviderBase
 							await GitUri.fromUri(document.uri),
 							position.line,
 							document,
+							'editor:hover',
 						)
 					: undefined,
 			])
@@ -208,6 +209,7 @@ export abstract class BlameAnnotationProviderBase extends AnnotationProviderBase
 			format: cfg.detailsMarkdownFormat,
 			pullRequests: cfg.pullRequests.enabled,
 			timeout: 250,
+			sourceName: 'editor:hover',
 		});
 	}
 }
@@ -218,7 +220,7 @@ function getRelativeAgeLookupTable(dates: Date[]) {
 	const half = Math.floor(dates.length / 2);
 	const median = dates.length % 2 ? dates[half].getTime() : (dates[half - 1].getTime() + dates[half].getTime()) / 2.0;
 
-	const newest = dates[dates.length - 1].getTime();
+	const newest = dates.at(-1)!.getTime();
 	let step = (newest - median) / 5;
 	for (let i = 5; i > 0; i--) {
 		lookup.push(median + step * i);

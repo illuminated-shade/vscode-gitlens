@@ -1,51 +1,51 @@
 import type { Uri } from 'vscode';
 import { Disposable, MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import type { IconPath } from '../../@types/vscode.iconpath';
-import type { ViewShowBranchComparison } from '../../config';
-import { GlyphChars } from '../../constants';
-import type { Colors } from '../../constants.colors';
-import type { Container } from '../../container';
-import type { GitRepositoryService } from '../../git/gitRepositoryService';
-import type { GitUri } from '../../git/gitUri';
-import { unknownGitUri } from '../../git/gitUri';
-import type { GitBranch } from '../../git/models/branch';
-import { isStash } from '../../git/models/commit';
-import type { GitLog } from '../../git/models/log';
-import type { PullRequest, PullRequestState } from '../../git/models/pullRequest';
-import type { GitBranchReference } from '../../git/models/reference';
-import type { Repository } from '../../git/models/repository';
-import type { GitUser } from '../../git/models/user';
-import type { GitWorktree } from '../../git/models/worktree';
-import { getBranchAheadRange, getBranchMergeTargetName } from '../../git/utils/-webview/branch.utils';
-import { getBranchIconPath, getRemoteIconPath, getWorktreeBranchIconPath } from '../../git/utils/-webview/icons';
-import { getLastFetchedUpdateInterval } from '../../git/utils/fetch.utils';
-import { getHighlanderProviders } from '../../git/utils/remote.utils';
-import { getContext } from '../../system/-webview/context';
-import { fromNow } from '../../system/date';
-import { gate } from '../../system/decorators/-webview/gate';
-import { memoize } from '../../system/decorators/-webview/memoize';
-import { debug, log } from '../../system/decorators/log';
-import { weakEvent } from '../../system/event';
-import { disposableInterval } from '../../system/function';
-import { map } from '../../system/iterable';
-import type { Deferred } from '../../system/promise';
-import { defer, getSettledValue } from '../../system/promise';
-import { pad } from '../../system/string';
-import type { View, ViewsWithBranches } from '../viewBase';
-import { disposeChildren } from '../viewBase';
-import { createViewDecorationUri } from '../viewDecorationProvider';
-import { SubscribeableViewNode } from './abstract/subscribeableViewNode';
-import type { PageableViewNode, ViewNode } from './abstract/viewNode';
-import { ContextValues, getViewNodeId } from './abstract/viewNode';
-import { ViewRefNode } from './abstract/viewRefNode';
-import { BranchTrackingStatusNode } from './branchTrackingStatusNode';
-import { CommitNode } from './commitNode';
-import { LoadMoreNode, MessageNode } from './common';
-import { CompareBranchNode } from './compareBranchNode';
-import { PausedOperationStatusNode } from './pausedOperationStatusNode';
-import { PullRequestNode } from './pullRequestNode';
-import { StashNode } from './stashNode';
-import { insertDateMarkers } from './utils/-webview/node.utils';
+import type { IconPath } from '../../@types/vscode.iconpath.d.js';
+import type { ViewShowBranchComparison } from '../../config.js';
+import type { Colors } from '../../constants.colors.js';
+import { GlyphChars } from '../../constants.js';
+import type { Container } from '../../container.js';
+import type { GitRepositoryService } from '../../git/gitRepositoryService.js';
+import type { GitUri } from '../../git/gitUri.js';
+import { unknownGitUri } from '../../git/gitUri.js';
+import type { GitBranch } from '../../git/models/branch.js';
+import { isStash } from '../../git/models/commit.js';
+import type { GitLog } from '../../git/models/log.js';
+import type { PullRequest, PullRequestState } from '../../git/models/pullRequest.js';
+import type { GitBranchReference } from '../../git/models/reference.js';
+import type { Repository, RepositoryChangeEvent } from '../../git/models/repository.js';
+import type { GitUser } from '../../git/models/user.js';
+import type { GitWorktree } from '../../git/models/worktree.js';
+import { getBranchAheadRange, getBranchMergeTargetName } from '../../git/utils/-webview/branch.utils.js';
+import { getBranchIconPath, getRemoteIconPath, getWorktreeBranchIconPath } from '../../git/utils/-webview/icons.js';
+import { getLastFetchedUpdateInterval } from '../../git/utils/fetch.utils.js';
+import { getHighlanderProviders } from '../../git/utils/remote.utils.js';
+import { getContext } from '../../system/-webview/context.js';
+import { fromNow } from '../../system/date.js';
+import { gate } from '../../system/decorators/gate.js';
+import { debug, trace } from '../../system/decorators/log.js';
+import { memoize } from '../../system/decorators/memoize.js';
+import { weakEvent } from '../../system/event.js';
+import { disposableInterval } from '../../system/function.js';
+import { map } from '../../system/iterable.js';
+import type { Deferred } from '../../system/promise.js';
+import { defer, getSettledValue } from '../../system/promise.js';
+import { pad } from '../../system/string.js';
+import type { View, ViewsWithBranches } from '../viewBase.js';
+import { disposeChildren } from '../viewBase.js';
+import { createViewDecorationUri } from '../viewDecorationProvider.js';
+import { SubscribeableViewNode } from './abstract/subscribeableViewNode.js';
+import type { PageableViewNode, ViewNode } from './abstract/viewNode.js';
+import { ContextValues, getViewNodeId } from './abstract/viewNode.js';
+import { ViewRefNode } from './abstract/viewRefNode.js';
+import { BranchTrackingStatusNode } from './branchTrackingStatusNode.js';
+import { CommitNode } from './commitNode.js';
+import { LoadMoreNode, MessageNode } from './common.js';
+import { CompareBranchNode } from './compareBranchNode.js';
+import { PausedOperationStatusNode } from './pausedOperationStatusNode.js';
+import { PullRequestNode } from './pullRequestNode.js';
+import { StashNode } from './stashNode.js';
+import { insertDateMarkers } from './utils/-webview/node.utils.js';
 
 type State = {
 	pullRequest: PullRequest | null | undefined;
@@ -220,164 +220,170 @@ export class BranchNode
 				}
 			}
 
-			const svc = this.view.container.git.getRepositoryService(this.uri.repoPath!);
-			const [
-				logResult,
-				getBranchAndTagTipsResult,
-				pausedOpStatusResult,
-				unpublishedCommitsResult,
-				baseResult,
-				targetResult,
-			] = await Promise.allSettled([
-				this.getLog(svc),
-				svc.getBranchesAndTagsTipsLookup(branch.name),
-				this.options.showStatus && branch.current ? svc.status.getPausedOperationStatus?.() : undefined,
-				!branch.remote
-					? getBranchAheadRange(svc, branch).then(range =>
-							range
-								? svc.commits.getLogShas(range, { limit: 0, merges: this.options.showMergeCommits })
-								: undefined,
-						)
-					: undefined,
-				loadComparisonDefaultCompareWith ? svc.branches.getBaseBranchName?.(this.branch.name) : undefined,
-				loadComparisonDefaultCompareWith
-					? getBranchMergeTargetName(this.view.container, this.branch, {
-							associatedPullRequest: prPromise,
-							timeout: 100,
-						})
-					: undefined,
-			]);
-			const log = getSettledValue(logResult);
-			if (log == null) return [new MessageNode(this.view, this, 'No commits could be found.')];
+			try {
+				const svc = this.view.container.git.getRepositoryService(this.uri.repoPath!);
+				const [
+					logResult,
+					getBranchAndTagTipsResult,
+					pausedOpStatusResult,
+					unpublishedCommitsResult,
+					baseResult,
+					targetResult,
+				] = await Promise.allSettled([
+					this.getLog(svc),
+					svc.getBranchesAndTagsTipsLookup(branch.name),
+					this.options.showStatus && branch.current ? svc.pausedOps?.getPausedOperationStatus?.() : undefined,
+					!branch.remote
+						? getBranchAheadRange(svc, branch).then(range =>
+								range
+									? svc.commits.getLogShas(range, { limit: 0, merges: this.options.showMergeCommits })
+									: undefined,
+							)
+						: undefined,
+					loadComparisonDefaultCompareWith ? svc.branches.getBaseBranchName?.(this.branch.name) : undefined,
+					loadComparisonDefaultCompareWith
+						? getBranchMergeTargetName(this.view.container, this.branch, {
+								associatedPullRequest: prPromise,
+								timeout: 100,
+							})
+						: undefined,
+				]);
+				const log = getSettledValue(logResult);
+				if (log == null) return [new MessageNode(this.view, this, 'No commits could be found.')];
 
-			const children = [];
+				const children = [];
 
-			const pausedOpsStatus = getSettledValue(pausedOpStatusResult);
-			const unpublishedCommits = new Set(getSettledValue(unpublishedCommitsResult));
+				const pausedOpsStatus = getSettledValue(pausedOpStatusResult);
+				const unpublishedCommits = new Set(getSettledValue(unpublishedCommitsResult));
 
-			if (pullRequest != null) {
-				children.push(new PullRequestNode(this.view, this, pullRequest, branch));
-			}
-
-			if (pausedOpsStatus != null) {
-				children.push(new PausedOperationStatusNode(this.view, this, branch, pausedOpsStatus, this.root));
-			} else if (this.options.showTracking) {
-				const status = {
-					ref: branch.ref,
-					repoPath: branch.repoPath,
-					upstream: branch.upstream,
-				};
-
-				if (status.upstream != null) {
-					if (this.root && status.upstream.missing) {
-						children.push(
-							new BranchTrackingStatusNode(this.view, this, branch, status, 'missing', this.root),
-						);
-					} else if (this.root && !status.upstream.state.behind && !status.upstream.state.ahead) {
-						children.push(new BranchTrackingStatusNode(this.view, this, branch, status, 'same', this.root));
-					} else {
-						if (status.upstream.state.behind) {
-							children.push(
-								new BranchTrackingStatusNode(this.view, this, branch, status, 'behind', this.root),
-							);
-						}
-
-						if (status.upstream.state.ahead) {
-							children.push(
-								new BranchTrackingStatusNode(this.view, this, branch, status, 'ahead', this.root, {
-									unpublishedCommits: unpublishedCommits,
-								}),
-							);
-						}
-					}
-				} else if (!branch.detached) {
-					children.push(new BranchTrackingStatusNode(this.view, this, branch, status, 'none', this.root));
+				if (pullRequest != null) {
+					children.push(new PullRequestNode(this.view, this, pullRequest, branch));
 				}
-			}
 
-			pullRequestInsertIndex = 0;
+				if (pausedOpsStatus != null) {
+					children.push(new PausedOperationStatusNode(this.view, this, branch, pausedOpsStatus, this.root));
+				} else if (this.options.showTracking) {
+					const status = {
+						ref: branch.ref,
+						repoPath: branch.repoPath,
+						upstream: branch.upstream,
+					};
 
-			if (comparison != null) {
-				children.push(comparison);
+					if (status.upstream != null) {
+						if (this.root && status.upstream.missing) {
+							children.push(
+								new BranchTrackingStatusNode(this.view, this, branch, status, 'missing', this.root),
+							);
+						} else if (this.root && !status.upstream.state.behind && !status.upstream.state.ahead) {
+							children.push(
+								new BranchTrackingStatusNode(this.view, this, branch, status, 'same', this.root),
+							);
+						} else {
+							if (status.upstream.state.behind) {
+								children.push(
+									new BranchTrackingStatusNode(this.view, this, branch, status, 'behind', this.root),
+								);
+							}
 
-				if (loadComparisonDefaultCompareWith) {
-					const baseBranchName = getSettledValue(baseResult);
-					const targetMaybeResult = getSettledValue(targetResult);
-
-					let baseOrTargetBranchName: string | undefined;
-					if (targetMaybeResult?.paused) {
-						baseOrTargetBranchName = baseBranchName;
-					} else {
-						baseOrTargetBranchName = targetMaybeResult?.value ?? baseBranchName;
+							if (status.upstream.state.ahead) {
+								children.push(
+									new BranchTrackingStatusNode(this.view, this, branch, status, 'ahead', this.root, {
+										unpublishedCommits: unpublishedCommits,
+									}),
+								);
+							}
+						}
+					} else if (!branch.detached) {
+						children.push(new BranchTrackingStatusNode(this.view, this, branch, status, 'none', this.root));
 					}
+				}
 
-					if (baseOrTargetBranchName != null) {
-						void comparison.setDefaultCompareWith({
-							ref: baseOrTargetBranchName,
-							label: baseOrTargetBranchName,
-							notation: '...',
-							type: 'branch',
-							checkedFiles: [],
-						});
-					}
+				pullRequestInsertIndex = 0;
 
-					if (targetMaybeResult?.paused) {
-						void targetMaybeResult.value.then(target => {
-							if (target == null) return;
+				if (comparison != null) {
+					children.push(comparison);
 
+					if (loadComparisonDefaultCompareWith) {
+						const baseBranchName = getSettledValue(baseResult);
+						const targetMaybeResult = getSettledValue(targetResult);
+
+						let baseOrTargetBranchName: string | undefined;
+						if (targetMaybeResult?.paused) {
+							baseOrTargetBranchName = baseBranchName;
+						} else {
+							baseOrTargetBranchName = targetMaybeResult?.value ?? baseBranchName;
+						}
+
+						if (baseOrTargetBranchName != null) {
 							void comparison.setDefaultCompareWith({
-								ref: target,
-								label: target,
+								ref: baseOrTargetBranchName,
+								label: baseOrTargetBranchName,
 								notation: '...',
 								type: 'branch',
 								checkedFiles: [],
 							});
-						});
+						}
+
+						if (targetMaybeResult?.paused) {
+							void targetMaybeResult.value.then(target => {
+								if (target == null) return;
+
+								void comparison.setDefaultCompareWith({
+									ref: target,
+									label: target,
+									notation: '...',
+									type: 'branch',
+									checkedFiles: [],
+								});
+							});
+						}
 					}
 				}
-			}
 
-			if (children.length !== 0) {
-				if (this.view.type === 'commits') {
-					children.push(new CommitsCurrentBranchNode(this.view, this, this.branch));
-				} else {
-					children.push(new MessageNode(this.view, this, '', GlyphChars.Dash.repeat(2), ''));
+				if (children.length !== 0) {
+					if (this.view.type === 'commits') {
+						children.push(new CommitsCurrentBranchNode(this.view, this, this.branch));
+					} else {
+						children.push(new MessageNode(this.view, this, '', GlyphChars.Dash.repeat(2), ''));
+					}
 				}
-			}
 
-			const getBranchAndTagTips = getSettledValue(getBranchAndTagTipsResult);
+				const getBranchAndTagTips = getSettledValue(getBranchAndTagTipsResult);
 
-			children.push(
-				...insertDateMarkers(
-					map(log.commits.values(), c =>
-						isStash(c)
-							? new StashNode(this.view, this, c, { icon: true })
-							: new CommitNode(
-									this.view,
-									this,
-									c,
-									unpublishedCommits?.has(c.ref),
-									branch,
-									getBranchAndTagTips,
-								),
-					),
-					this,
-				),
-			);
-
-			if (log.hasMore) {
 				children.push(
-					new LoadMoreNode(this.view, this, children[children.length - 1], {
-						getCount: () =>
-							this.view.container.git
-								.getRepositoryService(branch.repoPath)
-								.commits.getCommitCount(branch.name),
-					}),
+					...insertDateMarkers(
+						map(log.commits.values(), c =>
+							isStash(c)
+								? new StashNode(this.view, this, c, { icon: true })
+								: new CommitNode(
+										this.view,
+										this,
+										c,
+										unpublishedCommits?.has(c.ref),
+										branch,
+										getBranchAndTagTips,
+									),
+						),
+						this,
+					),
 				);
-			}
 
-			this.children = children;
-			setTimeout(() => onCompleted?.fulfill(), 1);
+				if (log.hasMore) {
+					children.push(
+						new LoadMoreNode(this.view, this, children.at(-1)!, {
+							getCount: () =>
+								this.view.container.git
+									.getRepositoryService(branch.repoPath)
+									.commits.getCommitCount(branch.name),
+						}),
+					);
+				}
+
+				this.children = children;
+			} finally {
+				// Always fulfill the deferred to prevent orphaned microtasks
+				setTimeout(() => onCompleted?.fulfill(), 1);
+			}
 		}
 
 		return this.children;
@@ -414,13 +420,13 @@ export class BranchNode
 		return item;
 	}
 
-	@log()
+	@debug()
 	async star(): Promise<void> {
 		await this.branch.star();
 		void this.view.refresh(true);
 	}
 
-	@log()
+	@debug()
 	async unstar(): Promise<void> {
 		await this.branch.unstar();
 		void this.view.refresh(true);
@@ -773,20 +779,22 @@ export class CommitsCurrentBranchNode extends SubscribeableViewNode<'commits-cur
 		return this.branch.upstream?.missing || this.branch.detached ? undefined : this.repo?.getLastFetched();
 	}
 
-	@debug()
+	@trace()
 	protected async subscribe(): Promise<Disposable | undefined> {
 		const lastFetched = (await this.getLastFetched()) ?? 0;
 
 		const interval = getLastFetchedUpdateInterval(lastFetched);
 		if (lastFetched !== 0 && interval > 0) {
 			return Disposable.from(
-				this.repo != null
-					? weakEvent(this.repo.onDidChange, () => this.view.triggerNodeChange(this), this)
-					: emptyDisposable,
+				this.repo != null ? weakEvent(this.repo.onDidChange, this.onRepositoryChanged, this) : emptyDisposable,
 				disposableInterval(() => {
+					// Skip update if view is not visible to reduce unnecessary work
+					if (!this.view.visible) return;
+
 					// Check if the interval should change, and if so, reset it
 					if (interval !== getLastFetchedUpdateInterval(lastFetched)) {
 						void this.resetSubscription();
+						return;
 					}
 
 					this.view.triggerNodeChange(this);
@@ -795,5 +803,10 @@ export class CommitsCurrentBranchNode extends SubscribeableViewNode<'commits-cur
 		}
 
 		return undefined;
+	}
+
+	@trace()
+	private onRepositoryChanged(_e: RepositoryChangeEvent) {
+		this.view.triggerNodeChange(this);
 	}
 }

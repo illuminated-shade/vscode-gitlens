@@ -1,4 +1,4 @@
-import { CharCode } from '../constants';
+import { CharCode } from '../constants.js';
 
 export function opacity(color: string, percentage: number): string {
 	const rgba = Color.from(color);
@@ -636,7 +636,7 @@ export function formatHex(color: Color): string {
 
 /**
  * Formats the color as #RRGGBBAA
- * If 'compact' is set, colors without transparancy will be printed as #RRGGBB
+ * If 'compact' is set, colors without transparency will be printed as #RRGGBB
  */
 export function formatHexA(color: Color, compact = false): string {
 	if (compact && color.rgba.a === 1) {
@@ -804,4 +804,12 @@ function _parseHexDigit(charCode: CharCode): number {
 			return 15;
 	}
 	return 0;
+}
+
+export function getCssMixedColorValue(color1: string, color2: string, percent: number): string {
+	return `color-mix(in srgb, ${color1} ${percent}%, ${color2})`;
+}
+
+export function getCssOpacityColorValue(color: string, percent: number): string {
+	return getCssMixedColorValue(color, 'transparent', percent);
 }

@@ -1,10 +1,9 @@
 import { Disposable } from 'vscode';
-import type { Container } from '../../../container';
-import type { GitFileChangeShape } from '../../../git/models/fileChange';
-import type { PatchRevisionRange } from '../../../git/models/patch';
-import type { Repository } from '../../../git/models/repository';
-import { RepositoryChange, RepositoryChangeComparisonMode } from '../../../git/models/repository';
-import type { Change, ChangeType, RevisionChange } from './protocol';
+import type { Container } from '../../../container.js';
+import type { GitFileChangeShape } from '../../../git/models/fileChange.js';
+import type { PatchRevisionRange } from '../../../git/models/patch.js';
+import type { Repository } from '../../../git/models/repository.js';
+import type { Change, ChangeType, RevisionChange } from './protocol.js';
 
 export interface RepositoryChangeset extends Disposable {
 	type: ChangeType;
@@ -168,9 +167,7 @@ export class RepositoryWipChangeset implements RepositoryChangeset {
 	async getChange(): Promise<Change> {
 		let filesResult;
 		if (this.expanded) {
-			if (this._files == null) {
-				this._files = this.getFiles();
-			}
+			this._files ??= this.getFiles();
 
 			filesResult = await this._files;
 		}
@@ -196,7 +193,7 @@ export class RepositoryWipChangeset implements RepositoryChangeset {
 			this.repository.watchFileSystem(1000),
 			this.repository.onDidChangeFileSystem(() => this.onDidChangeWip(), this),
 			this.repository.onDidChange(e => {
-				if (e.changed(RepositoryChange.Index, RepositoryChangeComparisonMode.Any)) {
+				if (e.changed('index')) {
 					this.onDidChangeWip();
 				}
 			}),

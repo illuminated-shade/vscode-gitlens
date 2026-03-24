@@ -1,13 +1,13 @@
-import { IssuesCloudHostIntegrationId } from '../../../constants.integrations';
-import { escapeMarkdown } from '../../../system/markdown';
-import { encodeHtmlWeak, escapeRegex } from '../../../system/string';
+import { IssuesCloudHostIntegrationId } from '../../../constants.integrations.js';
+import { escapeMarkdown } from '../../../system/markdown.js';
+import { encodeHtmlWeak, escapeRegex } from '../../../system/string.js';
 import type {
 	Autolink,
 	AutolinkReference,
 	CacheableAutolinkReference,
 	DynamicAutolinkReference,
 	RefSet,
-} from '../../models/autolinks';
+} from '../../models/autolinks.js';
 
 export function serializeAutolink(value: Autolink): Autolink {
 	const serialized: Autolink = {
@@ -32,7 +32,7 @@ export function serializeAutolink(value: Autolink): Autolink {
 	return serialized;
 }
 
-export const supportedAutolinkIntegrations = [IssuesCloudHostIntegrationId.Jira];
+export const supportedAutolinkIntegrations = [IssuesCloudHostIntegrationId.Jira, IssuesCloudHostIntegrationId.Linear];
 
 export function isDynamic(ref: AutolinkReference | DynamicAutolinkReference): ref is DynamicAutolinkReference {
 	return !('prefix' in ref) && !('url' in ref);
@@ -153,11 +153,11 @@ export function getBranchAutolinks(branchName: string, refsets: Readonly<RefSet[
 	let num;
 	let match;
 	// Sort refsets so that issue integrations are checked first for matches
-	const sortedRefSets = [...refsets].sort((a, b) => {
-		if (a[0]?.id === IssuesCloudHostIntegrationId.Jira || a[0]?.id === IssuesCloudHostIntegrationId.Trello) {
+	const sortedRefSets = refsets.toSorted((a, b) => {
+		if (a[0]?.id && Object.values<string>(IssuesCloudHostIntegrationId).includes(a[0].id)) {
 			return -1;
 		}
-		if (b[0]?.id === IssuesCloudHostIntegrationId.Jira || b[0]?.id === IssuesCloudHostIntegrationId.Trello) {
+		if (b[0]?.id && Object.values<string>(IssuesCloudHostIntegrationId).includes(b[0].id)) {
 			return 1;
 		}
 		return 0;

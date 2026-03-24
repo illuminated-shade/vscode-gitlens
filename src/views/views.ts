@@ -1,51 +1,52 @@
 import type { ConfigurationChangeEvent, MessageItem } from 'vscode';
-import { Disposable, env, window } from 'vscode';
-import type { GroupableTreeViewTypes, TreeViewTypes } from '../constants.views';
-import type { Container } from '../container';
-import type { GitContributor } from '../git/models/contributor';
+import { Disposable, env, ExtensionMode, window } from 'vscode';
+import type { GroupableTreeViewTypes, TreeViewTypes } from '../constants.views.js';
+import type { Container } from '../container.js';
+import type { GitContributor } from '../git/models/contributor.js';
 import type {
 	GitBranchReference,
 	GitRevisionReference,
 	GitStashReference,
 	GitTagReference,
-} from '../git/models/reference';
-import type { GitRemote } from '../git/models/remote';
-import type { GitWorktree } from '../git/models/worktree';
-import { executeCommand, executeCoreCommand, registerCommand } from '../system/-webview/command';
-import { configuration } from '../system/-webview/configuration';
-import { getContext, setContext } from '../system/-webview/context';
-import { getViewFocusCommand } from '../system/-webview/vscode/views';
-import { once } from '../system/function';
-import { first } from '../system/iterable';
-import { compare } from '../system/version';
+} from '../git/models/reference.js';
+import type { GitRemote } from '../git/models/remote.js';
+import type { GitWorktree } from '../git/models/worktree.js';
+import { executeCommand, executeCoreCommand, registerCommand } from '../system/-webview/command.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { getContext, setContext } from '../system/-webview/context.js';
+import { getViewFocusCommand } from '../system/-webview/vscode/views.js';
+import { once } from '../system/function.js';
+import { first } from '../system/iterable.js';
+import { compare } from '../system/version.js';
 import {
 	registerCommitDetailsWebviewView,
 	registerGraphDetailsWebviewView,
-} from '../webviews/commitDetails/registration';
-import { registerHomeWebviewView } from '../webviews/home/registration';
-import { registerGraphWebviewView } from '../webviews/plus/graph/registration';
-import { registerPatchDetailsWebviewView } from '../webviews/plus/patchDetails/registration';
-import { registerTimelineWebviewView } from '../webviews/plus/timeline/registration';
-import type { WebviewsController } from '../webviews/webviewsController';
-import { BranchesView } from './branchesView';
-import { CommitsView } from './commitsView';
-import { ContributorsView } from './contributorsView';
-import { DraftsView } from './draftsView';
-import { FileHistoryView } from './fileHistoryView';
-import { LaunchpadView } from './launchpadView';
-import { LineHistoryView } from './lineHistoryView';
-import type { ViewNode } from './nodes/abstract/viewNode';
-import { PullRequestView } from './pullRequestView';
-import { RemotesView } from './remotesView';
-import { RepositoriesView } from './repositoriesView';
-import { ScmGroupedView } from './scmGroupedView';
-import { SearchAndCompareView } from './searchAndCompareView';
-import { StashesView } from './stashesView';
-import { TagsView } from './tagsView';
-import type { TreeViewByType, ViewsWithRepositoryFolders } from './viewBase';
-import { ViewCommands } from './viewCommands';
-import { WorkspacesView } from './workspacesView';
-import { WorktreesView } from './worktreesView';
+} from '../webviews/commitDetails/registration.js';
+import { registerHomeWebviewView } from '../webviews/home/registration.js';
+import { registerGraphWebviewView } from '../webviews/plus/graph/registration.js';
+import { registerPatchDetailsWebviewView } from '../webviews/plus/patchDetails/registration.js';
+import { registerTimelineWebviewView } from '../webviews/plus/timeline/registration.js';
+import type { WebviewsController } from '../webviews/webviewsController.js';
+import { registerWelcomeWebviewView } from '../webviews/welcome/registration.js';
+import { BranchesView } from './branchesView.js';
+import { CommitsView } from './commitsView.js';
+import { ContributorsView } from './contributorsView.js';
+import { DraftsView } from './draftsView.js';
+import { FileHistoryView } from './fileHistoryView.js';
+import { LaunchpadView } from './launchpadView.js';
+import { LineHistoryView } from './lineHistoryView.js';
+import type { ViewNode } from './nodes/abstract/viewNode.js';
+import { PullRequestView } from './pullRequestView.js';
+import { RemotesView } from './remotesView.js';
+import { RepositoriesView } from './repositoriesView.js';
+import { ScmGroupedView } from './scmGroupedView.js';
+import { SearchAndCompareView } from './searchAndCompareView.js';
+import { StashesView } from './stashesView.js';
+import { TagsView } from './tagsView.js';
+import type { RevealOptions, TreeViewByType, ViewsWithRepositoryFolders } from './viewBase.js';
+import { ViewCommands } from './viewCommands.js';
+import { WorkspacesView } from './workspacesView.js';
+import { WorktreesView } from './worktreesView.js';
 
 const defaultScmGroupedViews = {
 	commits: true,
@@ -100,10 +101,6 @@ export class Views implements Disposable {
 		return this._scmGroupedViews;
 	}
 
-	private _lastSelectedByView = new Map<
-		GroupableTreeViewTypes,
-		{ node: ViewNode; parents: ViewNode[]; expanded: boolean }
-	>();
 	private _welcomeDismissed = false;
 
 	constructor(
@@ -120,23 +117,35 @@ export class Views implements Disposable {
 
 		this._welcomeDismissed = container.storage.get('views:scm:grouped:welcome:dismissed', false);
 
+		let newInstall = false;
+		let showGitLensView = false;
+		if (!configuration.get('advanced.skipOnboarding')) {
+			// If this is a new install, expand the GitLens view and show the home view by default, unless we are skipping onboarding
+			newInstall = getContext('gitlens:install:new', false);
+			showGitLensView = newInstall;
+			if (!showGitLensView) {
+				const upgradedFrom = getContext('gitlens:install:upgradedFrom');
+				if (upgradedFrom && compare(upgradedFrom, '16.0.2') === -1) {
+					showGitLensView = !this._welcomeDismissed;
+				}
+			}
+		} else if (!this._welcomeDismissed) {
+			void container.storage.store('views:scm:grouped:welcome:dismissed', true).catch();
+			this._welcomeDismissed = true;
+		}
+
 		this._lastSelectedScmGroupedView = this.container.storage.getWorkspace(
 			'views:scm:grouped:selected',
 			configuration.get('views.scm.grouped.default'),
 		);
 		this.updateScmGroupedViewsRegistration();
 
-		// If this is a new install, expand the GitLens view and show the home view by default
-		const newInstall = getContext('gitlens:install:new', false);
-		let showGitLensView = newInstall;
-		if (!showGitLensView) {
-			const upgradedFrom = getContext('gitlens:install:upgradedFrom');
-			if (upgradedFrom && compare(upgradedFrom, '16.0.2') === -1) {
-				showGitLensView = !container.storage.get('views:scm:grouped:welcome:dismissed', false);
-			}
-		}
-
-		if (showGitLensView && !env.remoteName && env.appHost === 'desktop') {
+		if (
+			showGitLensView &&
+			!env.remoteName &&
+			env.appHost === 'desktop' &&
+			container.extensionMode === ExtensionMode.Production
+		) {
 			const disposable = once(container.onReady)(() => {
 				disposable?.dispose();
 				setTimeout(() => {
@@ -418,6 +427,7 @@ export class Views implements Disposable {
 			(this._homeView = registerHomeWebviewView(webviews)),
 			(this._patchDetailsView = registerPatchDetailsWebviewView(webviews)),
 			(this._timelineView = registerTimelineWebviewView(webviews)),
+			(this._welcomeView = registerWelcomeWebviewView(webviews)),
 		];
 	}
 
@@ -504,48 +514,8 @@ export class Views implements Disposable {
 
 	private async setScmGroupedView<T extends GroupableTreeViewTypes>(type: T, focus?: boolean) {
 		if (this._scmGroupedView != null) {
-			// Save current selection before switching views
-			let { view } = this._scmGroupedView;
-			if (view) {
-				const node: ViewNode | undefined = view.selection?.[0];
-				if (node != null) {
-					const parents: ViewNode[] = [];
-
-					let parent: ViewNode | undefined = node;
-					while (true) {
-						parent = parent.getParent();
-						if (parent == null) break;
-
-						parents.unshift(parent);
-					}
-
-					this._lastSelectedByView.set(view.type, {
-						node: node,
-						parents: parents,
-						expanded: view.isNodeExpanded(node),
-					});
-				}
-			}
-
 			await this._scmGroupedView.clearView(type);
-			view = this._scmGroupedView.setView(type, focus);
-
-			// Restore the last selection for this view type (if any)
-			if (view) {
-				if (!view.visible) {
-					await view.show({ preserveFocus: !focus });
-				}
-
-				const selection = this._lastSelectedByView.get(type);
-				if (selection != null) {
-					setTimeout(async () => {
-						const { node, parents, expanded } = selection;
-						await view.revealDeep(node, parents, { expand: expanded, focus: focus ?? false, select: true });
-					}, 1);
-				}
-			}
-
-			return view;
+			return this._scmGroupedView.setView(type, { focus: focus });
 		}
 
 		if (!this.scmGroupedViews?.has(type)) {
@@ -563,7 +533,7 @@ export class Views implements Disposable {
 	private async showWelcomeNotification() {
 		this._welcomeDismissed = true;
 
-		const newInstall = getContext('gitlens:install:new', false);
+		const newInstall = !configuration.get('advanced.skipOnboarding') && getContext('gitlens:install:new', false);
 
 		const confirm: MessageItem = { title: 'OK', isCloseAffordance: true };
 		const Restore: MessageItem = { title: 'Restore Previous Locations' };
@@ -623,7 +593,7 @@ export class Views implements Disposable {
 		if (this._scmGroupedViews.size) {
 			if (this._welcomeDismissed || bypassWelcomeView) {
 				// If we are bypassing the welcome view, show it as a notification -- since we can't block the view from loading
-				if (!this._welcomeDismissed && bypassWelcomeView) {
+				if (!this._welcomeDismissed && bypassWelcomeView && !configuration.get('advanced.skipOnboarding')) {
 					void this.showWelcomeNotification();
 				}
 
@@ -813,6 +783,11 @@ export class Views implements Disposable {
 		return this._timelineView;
 	}
 
+	private _welcomeView!: ReturnType<typeof registerWelcomeWebviewView>;
+	get welcome(): ReturnType<typeof registerWelcomeWebviewView> {
+		return this._welcomeView;
+	}
+
 	private _worktreesView: WorktreesView | undefined;
 	get worktrees(): WorktreesView {
 		return this._worktreesView ?? this.getScmGroupedView('worktrees');
@@ -823,14 +798,7 @@ export class Views implements Disposable {
 		return this._workspacesView;
 	}
 
-	async revealBranch(
-		branch: GitBranchReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealBranch(branch: GitBranchReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const branches = branch.remote ? this.remotes : this.branches;
 		const view = branches.canReveal ? branches : this.repositories;
 
@@ -839,14 +807,7 @@ export class Views implements Disposable {
 		return node;
 	}
 
-	async revealCommit(
-		commit: GitRevisionReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealCommit(commit: GitRevisionReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const { commits } = this;
 		const view = commits.canReveal ? commits : this.repositories;
 
@@ -855,14 +816,7 @@ export class Views implements Disposable {
 		return node;
 	}
 
-	async revealContributor(
-		contributor: GitContributor,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealContributor(contributor: GitContributor, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const { contributors } = this;
 		const view = contributors.canReveal ? contributors : this.repositories;
 
@@ -871,14 +825,7 @@ export class Views implements Disposable {
 		return node;
 	}
 
-	async revealRemote(
-		remote: GitRemote | undefined,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealRemote(remote: GitRemote | undefined, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const { remotes } = this;
 		const view = remotes.canReveal ? remotes : this.repositories;
 
@@ -890,11 +837,7 @@ export class Views implements Disposable {
 	async revealRepository(
 		repoPath: string,
 		useView?: ViewsWithRepositoryFolders,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
+		options?: RevealOptions,
 	): Promise<ViewNode | undefined> {
 		const view = useView == null || useView.canReveal === false ? this.repositories : useView;
 
@@ -903,14 +846,7 @@ export class Views implements Disposable {
 		return node;
 	}
 
-	async revealStash(
-		stash: GitStashReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealStash(stash: GitStashReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const { stashes } = this;
 		const view = stashes.canReveal ? stashes : this.repositories;
 
@@ -919,14 +855,7 @@ export class Views implements Disposable {
 		return node;
 	}
 
-	async revealTag(
-		tag: GitTagReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealTag(tag: GitTagReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const { tags } = this;
 		const view = tags.canReveal ? tags : this.repositories;
 
@@ -935,14 +864,7 @@ export class Views implements Disposable {
 		return node;
 	}
 
-	async revealWorktree(
-		worktree: GitWorktree,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealWorktree(worktree: GitWorktree, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const { worktrees } = this;
 		const view = worktrees.canReveal ? worktrees : this.repositories;
 

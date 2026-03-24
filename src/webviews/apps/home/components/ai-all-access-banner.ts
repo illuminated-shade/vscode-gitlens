@@ -1,14 +1,14 @@
 import { consume } from '@lit/context';
 import { css, html, LitElement, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { compareSubscriptionPlans } from '../../../../plus/gk/utils/subscription.utils';
-import { createCommandLink } from '../../../../system/commands';
-import type { State } from '../../../home/protocol';
-import { DismissAiAllAccessBannerCommand } from '../../../home/protocol';
-import { ipcContext } from '../../shared/contexts/ipc';
-import type { HostIpc } from '../../shared/ipc';
-import { stateContext } from '../context';
-import '../../shared/components/banner/banner';
+import { compareSubscriptionPlans } from '../../../../plus/gk/utils/subscription.utils.js';
+import { createCommandLink } from '../../../../system/commands.js';
+import type { State } from '../../../home/protocol.js';
+import { DismissAiAllAccessBannerCommand } from '../../../home/protocol.js';
+import { ipcContext } from '../../shared/contexts/ipc.js';
+import type { HostIpc } from '../../shared/ipc.js';
+import { stateContext } from '../context.js';
+import '../../shared/components/banner/banner.js';
 
 export const aiAllAccessBannerTagName = 'gl-ai-all-access-banner';
 
@@ -41,12 +41,13 @@ export class GlAiAllAccessBanner extends LitElement {
 
 	private get shouldShow(): boolean {
 		// Don't show if dismissed or closed
-		return !(this._state.aiAllAccessBannerCollapsed);
+		return !this._state.aiAllAccessBannerCollapsed;
 	}
 
 	private get bodyLabel(): string {
-		return this.hasAdvancedOrHigher ? 'Opt in now to get unlimited GitKraken AI until July 11th!' : 'Opt in now to try all Advanced GitLens features with unlimited GitKraken AI for FREE until July 11th!';
-
+		return this.hasAdvancedOrHigher
+			? 'Opt in now to get unlimited GitKraken AI until July 11th!'
+			: 'Opt in now to try all Advanced GitLens features with unlimited GitKraken AI for FREE until July 11th!';
 	}
 
 	private get primaryButtonLabel(): string {
@@ -54,7 +55,11 @@ export class GlAiAllAccessBanner extends LitElement {
 	}
 
 	private get hasAdvancedOrHigher(): boolean {
-		return this._state.subscription.plan && compareSubscriptionPlans(this._state.subscription.plan.actual.id, 'advanced') >= 0 || compareSubscriptionPlans(this._state.subscription.plan.effective.id, 'advanced') >= 0;
+		return (
+			(this._state.subscription.plan &&
+				compareSubscriptionPlans(this._state.subscription.plan.actual.id, 'advanced') >= 0) ||
+			compareSubscriptionPlans(this._state.subscription.plan.effective.id, 'advanced') >= 0
+		);
 	}
 
 	override render(): unknown {
@@ -68,10 +73,7 @@ export class GlAiAllAccessBanner extends LitElement {
 				banner-title="All Access Week - now until July 11th!"
 				body="${this.bodyLabel}"
 				primary-button="${this.primaryButtonLabel}"
-				primary-button-href="${createCommandLink(
-					'gitlens.plus.aiAllAccess.optIn',
-					{ source: 'home' },
-				)}"
+				primary-button-href="${createCommandLink('gitlens.plus.aiAllAccess.optIn', { source: 'home' })}"
 				secondary-button="Dismiss"
 				@gl-banner-secondary-click=${this.onSecondaryClick}
 			></gl-banner>

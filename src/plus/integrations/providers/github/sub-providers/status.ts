@@ -1,11 +1,13 @@
 import type { CancellationToken } from 'vscode';
-import type { Container } from '../../../../../container';
-import type { GitStatusSubProvider } from '../../../../../git/gitProvider';
-import { GitStatus } from '../../../../../git/models/status';
-import { gate } from '../../../../../system/decorators/-webview/gate';
-import { log } from '../../../../../system/decorators/log';
-import { HeadType } from '../../../../remotehub';
-import type { GitHubGitProviderInternal } from '../githubGitProvider';
+import type { Container } from '../../../../../container.js';
+import type { GitStatusSubProvider, GitWorkingChangesState } from '../../../../../git/gitProvider.js';
+import type { GitFile } from '../../../../../git/models/file.js';
+import type { GitConflictFile } from '../../../../../git/models/index.js';
+import { GitStatus } from '../../../../../git/models/status.js';
+import { gate } from '../../../../../system/decorators/gate.js';
+import { debug } from '../../../../../system/decorators/log.js';
+import { HeadType } from '../../../../remotehub.js';
+import type { GitHubGitProviderInternal } from '../githubGitProvider.js';
 
 export class StatusGitSubProvider implements GitStatusSubProvider {
 	constructor(
@@ -14,7 +16,7 @@ export class StatusGitSubProvider implements GitStatusSubProvider {
 	) {}
 
 	@gate()
-	@log()
+	@debug()
 	async getStatus(repoPath: string | undefined, _cancellation?: CancellationToken): Promise<GitStatus | undefined> {
 		if (repoPath == null) return undefined;
 
@@ -34,5 +36,25 @@ export class StatusGitSubProvider implements GitStatusSubProvider {
 				? { name: `origin/${revision.name}`, missing: false, state: { ahead: 0, behind: 0 } }
 				: undefined,
 		);
+	}
+
+	hasWorkingChanges(): Promise<boolean> {
+		return Promise.resolve(false);
+	}
+
+	getWorkingChangesState(): Promise<GitWorkingChangesState> {
+		return Promise.resolve({ staged: false, unstaged: false, untracked: false });
+	}
+
+	hasConflictingFiles(): Promise<boolean> {
+		return Promise.resolve(false);
+	}
+
+	getConflictingFiles(): Promise<GitConflictFile[]> {
+		return Promise.resolve([]);
+	}
+
+	getUntrackedFiles(): Promise<GitFile[]> {
+		return Promise.resolve([]);
 	}
 }

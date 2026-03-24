@@ -1,0 +1,104 @@
+import { css, html, LitElement, nothing } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
+import { urls } from '../../../../constants.js';
+import { createCommandLink } from '../../../../system/commands.js';
+import './banner/banner.js';
+
+export const mcpBannerTagName = 'gl-mcp-banner';
+
+export interface McpBannerSource {
+	source: string;
+}
+
+@customElement(mcpBannerTagName)
+export class GlMcpBanner extends LitElement {
+	static override shadowRootOptions: ShadowRootInit = {
+		...LitElement.shadowRootOptions,
+		delegatesFocus: true,
+	};
+
+	static override styles = [
+		css`
+			:host {
+				display: block;
+			}
+
+			gl-banner {
+				margin-bottom: 1.2rem;
+			}
+
+			:host([layout='responsive']) gl-banner {
+				margin-bottom: 0;
+				width: 100%;
+			}
+		`,
+	];
+
+	@property()
+	source: string = 'unknown';
+
+	@property()
+	layout: 'default' | 'responsive' = 'default';
+
+	@property({ type: Boolean })
+	collapsed: boolean = false;
+
+	@property({ type: Boolean })
+	private canAutoRegister: boolean = false;
+
+	@property({ type: Boolean, attribute: 'show-cleanup-notice' })
+	showCleanupNotice: boolean = false;
+
+	override render(): unknown {
+		if (this.collapsed) {
+			return nothing;
+		}
+
+		if (this.canAutoRegister) {
+			const cleanupNote = this.showCleanupNotice
+				? ` &mdash; <strong>Note:</strong> You may have a duplicate entry in your Cursor <code>mcp.json</code>. Remove <code>mcpServers.GitKraken</code> to clean it up.`
+				: '';
+			const bodyHtml = `GitKraken MCP is active in your AI chat, leveraging Git and your integrations to provide context and perform actions. <a href="${urls.helpCenterMCP}">Learn more</a>${cleanupNote}`;
+
+			return html`
+				<gl-banner
+					exportparts="base"
+					display="gradient-purple"
+					layout="${this.layout}"
+					banner-title="GitKraken MCP Bundled with GitLens"
+					body="${bodyHtml}"
+					dismissible
+					dismiss-href="${createCommandLink('gitlens.storage.store', {
+						key: 'mcp:banner:dismissed',
+						value: true,
+					})}"
+				></gl-banner>
+			`;
+		}
+
+		const bodyHtml = `Leverage Git and your integrations (issues, PRs, etc) to provide context and perform actions in AI chat. <a href="${urls.helpCenterMCP}">Learn more</a>`;
+
+		return html`
+			<gl-banner
+				exportparts="base"
+				display="gradient-purple"
+				layout="${this.layout}"
+				banner-title="Install GitKraken MCP for GitLens"
+				body="${bodyHtml}"
+				primary-button="Install GitKraken MCP"
+				primary-button-href="${createCommandLink('gitlens.ai.mcp.install', { source: this.source })}"
+				dismissible
+				dismiss-href="${createCommandLink('gitlens.storage.store', {
+					key: 'mcp:banner:dismissed',
+					value: true,
+				})}"
+			></gl-banner>
+		`;
+	}
+}
+
+declare global {
+	interface HTMLElementTagNameMap {
+		[mcpBannerTagName]: GlMcpBanner;
+	}
+}

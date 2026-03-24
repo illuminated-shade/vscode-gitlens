@@ -1,19 +1,19 @@
 import type { Disposable, Event } from 'vscode';
 import { authentication, EventEmitter } from 'vscode';
-import type { IntegrationIds } from '../../../constants.integrations';
-import { GitCloudHostIntegrationId } from '../../../constants.integrations';
-import type { Sources } from '../../../constants.telemetry';
-import type { Container } from '../../../container';
-import { debug } from '../../../system/decorators/log';
-import { getBuiltInIntegrationSession } from '../../gk/utils/-webview/integrationAuthentication.utils';
+import type { IntegrationIds } from '../../../constants.integrations.js';
+import { GitCloudHostIntegrationId } from '../../../constants.integrations.js';
+import type { Sources } from '../../../constants.telemetry.js';
+import type { Container } from '../../../container.js';
+import { trace } from '../../../system/decorators/log.js';
+import { getBuiltInIntegrationSession } from '../../gk/utils/-webview/integrationAuthentication.utils.js';
 import {
 	isCloudGitSelfManagedHostIntegrationId,
 	isGitSelfManagedHostIntegrationId,
-} from '../utils/-webview/integration.utils';
-import type { ConfiguredIntegrationService } from './configuredIntegrationService';
-import type { IntegrationAuthenticationService } from './integrationAuthenticationService';
-import type { ProviderAuthenticationSession } from './models';
-import { isSupportedCloudIntegrationId } from './models';
+} from '../utils/-webview/integration.utils.js';
+import type { ConfiguredIntegrationService } from './configuredIntegrationService.js';
+import type { IntegrationAuthenticationService } from './integrationAuthenticationService.js';
+import type { ProviderAuthenticationSession } from './models.js';
+import { isSupportedCloudIntegrationId } from './models.js';
 
 const maxSmallIntegerV8 = 2 ** 30 - 1; // Max number that can be stored in V8's smis (small integers)
 
@@ -40,9 +40,9 @@ export interface IntegrationAuthenticationProvider extends Disposable {
 	get onDidChange(): Event<void>;
 }
 
-abstract class IntegrationAuthenticationProviderBase<ID extends IntegrationIds = IntegrationIds>
-	implements IntegrationAuthenticationProvider
-{
+abstract class IntegrationAuthenticationProviderBase<
+	ID extends IntegrationIds = IntegrationIds,
+> implements IntegrationAuthenticationProvider {
 	protected readonly disposables: Disposable[] = [];
 
 	protected readonly cloud: boolean = false;
@@ -64,7 +64,7 @@ abstract class IntegrationAuthenticationProviderBase<ID extends IntegrationIds =
 
 	protected abstract get authProviderId(): ID;
 
-	@debug()
+	@trace()
 	async deleteSession(descriptor: IntegrationAuthenticationSessionDescriptor): Promise<void> {
 		const configured = await this.configuredIntegrationService.getConfigured(this.authProviderId, {
 			cloud: this.cloud,
@@ -83,7 +83,7 @@ abstract class IntegrationAuthenticationProviderBase<ID extends IntegrationIds =
 		}
 	}
 
-	@debug()
+	@trace()
 	async deleteAllSessions(): Promise<void> {
 		const configured = await this.configuredIntegrationService.getConfigured(this.authProviderId, {
 			cloud: this.cloud,
@@ -100,7 +100,7 @@ abstract class IntegrationAuthenticationProviderBase<ID extends IntegrationIds =
 		}
 	}
 
-	@debug()
+	@trace()
 	async getSession(
 		descriptor: IntegrationAuthenticationSessionDescriptor,
 		options?:
@@ -210,7 +210,7 @@ export abstract class CloudIntegrationAuthenticationProvider<
 			  },
 	): Promise<ProviderAuthenticationSession | undefined> {
 		if (options?.forceNewSession) {
-			if (!(await this.disconnectCloudSession())) {
+			if ((await this.disconnectCloudSession()) === 'failure') {
 				return undefined;
 			}
 
@@ -298,6 +298,7 @@ export abstract class CloudIntegrationAuthenticationProvider<
 				label: '',
 			},
 			cloud: true,
+			type: session.type,
 			expiresAt: new Date(session.expiresIn * 1000 + Date.now()),
 			// Note: do not use the session's domain, because the format is different than in our model
 			domain: descriptor.domain,
@@ -305,14 +306,14 @@ export abstract class CloudIntegrationAuthenticationProvider<
 		};
 	}
 
-	private async disconnectCloudSession(): Promise<boolean> {
+	private async disconnectCloudSession(): Promise<'skip' | 'success' | 'failure'> {
 		const loggedIn = await this.container.subscription.getAuthenticationSession(false);
-		if (!loggedIn) return false;
+		if (!loggedIn) return 'skip';
 
 		const cloudIntegrations = await this.container.cloudIntegrations;
-		if (cloudIntegrations == null) return false;
+		if (cloudIntegrations == null) return 'skip';
 
-		return cloudIntegrations.disconnect(this.authProviderId);
+		return (await cloudIntegrations.disconnect(this.authProviderId)) ? 'success' : 'failure';
 	}
 }
 
@@ -337,7 +338,7 @@ export class BuiltInAuthenticationProvider extends LocalIntegrationAuthenticatio
 		throw new Error('Method `createSession` should never be used in BuiltInAuthenticationProvider');
 	}
 
-	@debug()
+	@trace()
 	override async getSession(
 		descriptor: IntegrationAuthenticationSessionDescriptor,
 		options?: { createIfNeeded?: boolean; forceNewSession?: boolean },

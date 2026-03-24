@@ -1,21 +1,115 @@
-import type { Container } from '../../container';
-import { joinPaths, normalizePath } from '../../system/path';
-import { maybeStopWatch } from '../../system/stopwatch';
+import type { Container } from '../../container.js';
+import { joinPaths, normalizePath } from '../../system/path.js';
+import { maybeStopWatch } from '../../system/stopwatch.js';
 import type {
 	GitDiffShortStat,
 	ParsedGitDiff,
+	ParsedGitDiffFile,
+	ParsedGitDiffFileMetadata,
 	ParsedGitDiffHunk,
 	ParsedGitDiffHunkLine,
 	ParsedGitDiffHunks,
-} from '../models/diff';
-import type { GitFile } from '../models/file';
-import { GitFileChange } from '../models/fileChange';
-import type { GitFileStatus } from '../models/fileStatus';
+} from '../models/diff.js';
+import type { GitFile } from '../models/file.js';
+import { GitFileChange } from '../models/fileChange.js';
+import type { GitFileStatus } from '../models/fileStatus.js';
+import { GitFileIndexStatus } from '../models/fileStatus.js';
 
 export const diffRegex = /^diff --git a\/(.*) b\/(.*)$/;
 export const diffHunkRegex = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
+const diffStatusRegex =
+	/^(?:(new file mode)|(deleted file mode)|(rename (?:from|to))|(copy (?:from|to))|(old mode|new mode)|(@@ -)|(Binary files .+ differ))/m;
 const shortStatDiffRegex = /(\d+)\s+files? changed(?:,\s+(\d+)\s+insertions?\(\+\))?(?:,\s+(\d+)\s+deletions?\(-\))?/;
+const oldModeRegex = /old mode (\d+)/;
+const newModeRegex = /new mode (\d+)/;
+const similarityRegex = /similarity index (\d+)%/;
+const diffGitSplitRegex = /^diff --git /m;
+const diffGitLookaheadRegex = /^(?=diff --git )/m;
+const applyRenameSummaryRegex = /(rename) (.*?)\{?([^{]+?)\s+=>\s+(.+?)\}?(?: \(\d+%\))|(create|delete) mode \d+ (.+)/;
+
+interface ParsedGitDiffFileResult {
+	status: GitFileStatus;
+	metadata: ParsedGitDiffFileMetadata;
+}
+
+function parseFileStatusAndMetadata(
+	content: string,
+	originalPath: string,
+	path: string,
+	hasHunks: boolean,
+): ParsedGitDiffFileResult {
+	// Use a single regex to find all relevant patterns at once
+	const matches = content.match(diffStatusRegex);
+
+	// Initialize metadata
+	let isBinary = false;
+	let modeChanged = false;
+	let oldMode: string | undefined;
+	let newMode: string | undefined;
+	let similarity: number | undefined;
+	let status: GitFileStatus;
+
+	if (matches) {
+		const [, newFile, deletedFile, rename, copy, modeChange, _hunks, binary] = matches;
+
+		// Extract metadata from matches
+		isBinary = Boolean(binary);
+		modeChanged = Boolean(modeChange);
+
+		// Determine status based on found patterns (priority order)
+		if (newFile) {
+			status = GitFileIndexStatus.Added;
+		} else if (deletedFile) {
+			status = GitFileIndexStatus.Deleted;
+		} else if (rename) {
+			status = GitFileIndexStatus.Renamed;
+		} else if (copy) {
+			status = GitFileIndexStatus.Copied;
+		} else if (binary) {
+			status = path !== originalPath ? GitFileIndexStatus.Renamed : GitFileIndexStatus.Modified;
+		} else if (modeChange && !hasHunks) {
+			status = GitFileIndexStatus.TypeChanged;
+		} else {
+			// Default logic based on path comparison
+			status = path !== originalPath ? GitFileIndexStatus.Renamed : GitFileIndexStatus.Modified;
+		}
+	} else {
+		// Default logic based on path comparison
+		status = path !== originalPath ? GitFileIndexStatus.Renamed : GitFileIndexStatus.Modified;
+	}
+
+	// Extract mode information if we detected a mode change
+	if (modeChanged) {
+		const oldModeMatch = content.match(oldModeRegex);
+		const newModeMatch = content.match(newModeRegex);
+		if (oldModeMatch) {
+			oldMode = oldModeMatch[1];
+		}
+		if (newModeMatch) {
+			newMode = newModeMatch[1];
+		}
+	}
+
+	// Extract similarity for renames/copies
+	if (status === GitFileIndexStatus.Renamed || status === GitFileIndexStatus.Copied) {
+		const similarityMatch = content.match(similarityRegex);
+		if (similarityMatch) {
+			similarity = parseInt(similarityMatch[1], 10);
+		}
+	}
+
+	const metadata: ParsedGitDiffFileMetadata = {
+		binary: isBinary,
+		modeChanged: modeChanged ? { oldMode: oldMode!, newMode: newMode! } : false,
+		renamedOrCopied:
+			status === GitFileIndexStatus.Renamed || status === GitFileIndexStatus.Copied
+				? { similarity: similarity }
+				: false,
+	};
+
+	return { status: status, metadata: metadata };
+}
 
 function parseHunkHeaderPart(headerPart: string) {
 	const [startS, countS] = headerPart.split(',');
@@ -25,12 +119,12 @@ function parseHunkHeaderPart(headerPart: string) {
 }
 
 export function parseGitDiff(data: string, includeRawContent = false): ParsedGitDiff {
-	using sw = maybeStopWatch('Git.parseDiffFiles', { log: false, logLevel: 'debug' });
+	using sw = maybeStopWatch('Git.parseDiffFiles', { log: { onlyExit: true, level: 'debug' } });
 
 	const parsed: ParsedGitDiff = { files: [], rawContent: includeRawContent ? data : undefined };
 
 	// Split the diff data into file chunks
-	const files = data.split(/^diff --git /m).filter(Boolean);
+	const files = data.split(diffGitSplitRegex).filter(Boolean);
 	if (!files.length) {
 		sw?.stop({ suffix: ` parsed no files` });
 		return parsed;
@@ -44,19 +138,36 @@ export function parseGitDiff(data: string, includeRawContent = false): ParsedGit
 
 		const [, originalPath, path] = match;
 
+		// Check for hunks and parse file status and metadata in a single pass
 		const hunkStartIndex = file.indexOf('\n@@ -');
-		if (hunkStartIndex === -1) continue;
+		const hasHunks = hunkStartIndex !== -1;
+		const { status, metadata } = parseFileStatusAndMetadata(file, originalPath, path, hasHunks);
 
-		const header = `diff --git ${file.substring(0, hunkStartIndex)}`;
-		const content = file.substring(hunkStartIndex + 1);
+		let header: string;
+		let rawContent: string | undefined;
+		let hunks: ParsedGitDiffHunk[];
+
+		if (!hasHunks) {
+			// No hunks - file without content changes (renames, mode changes, etc.)
+			header = `diff --git ${file}`;
+			rawContent = includeRawContent ? file : undefined;
+			hunks = [];
+		} else {
+			// Has hunks - extract header and content efficiently
+			header = `diff --git ${file.substring(0, hunkStartIndex)}`;
+			const content = file.substring(hunkStartIndex + 1);
+			rawContent = includeRawContent ? content : undefined;
+			hunks = parseGitFileDiff(content, includeRawContent)?.hunks || [];
+		}
+
 		parsed.files.push({
 			path: path,
 			originalPath: path === originalPath ? undefined : originalPath,
-			status: (path !== originalPath ? 'R' : 'M') as GitFileStatus,
-
+			status: status,
 			header: header,
-			rawContent: includeRawContent ? content : undefined,
-			hunks: parseGitFileDiff(content, includeRawContent)?.hunks || [],
+			rawContent: rawContent,
+			hunks: hunks,
+			metadata: metadata,
 		});
 	}
 
@@ -65,8 +176,61 @@ export function parseGitDiff(data: string, includeRawContent = false): ParsedGit
 	return parsed;
 }
 
+/**
+ * Filters a diff string, keeping only files whose paths are returned by the predicate.
+ * @param diff The raw diff string
+ * @param getIncludedPaths Predicate that receives all file paths and returns the paths to include
+ * @returns Filtered diff with only included files, or the original diff if no files were excluded
+ */
+export async function filterDiffFiles(
+	diff: string,
+	getIncludedPaths: (paths: string[]) => string[] | Promise<string[]>,
+): Promise<string> {
+	if (!diff) return diff;
+
+	// Split into file chunks at "diff --git" boundaries (lookahead keeps the delimiter)
+	const chunks = diff.split(diffGitLookaheadRegex).filter(Boolean);
+	if (!chunks.length) return diff;
+
+	// Extract path from each chunk's header line
+	const filesWithChunks = chunks.map(chunk => {
+		const match = diffRegex.exec(chunk.split('\n', 1)[0]);
+		return { path: match?.[2] ?? '', chunk: chunk };
+	});
+
+	const allPaths = filesWithChunks.map(f => f.path);
+	const includedPaths = await getIncludedPaths(allPaths);
+
+	if (includedPaths.length === allPaths.length) return diff;
+
+	return filesWithChunks
+		.filter(f => includedPaths.includes(f.path))
+		.map(f => f.chunk)
+		.join('');
+}
+
+/** Counts insertions and deletions from a parsed diff file */
+export function countDiffInsertionsAndDeletions(file: ParsedGitDiffFile): { insertions: number; deletions: number } {
+	let insertions = 0;
+	let deletions = 0;
+	for (const hunk of file.hunks) {
+		insertions += hunk.current.count;
+		deletions += hunk.previous.count;
+	}
+	return { insertions: insertions, deletions: deletions };
+}
+
+/** Counts approximate number of changed lines in a diff file */
+export function countDiffLines(file: ParsedGitDiffFile): number {
+	let count = 0;
+	for (const hunk of file.hunks) {
+		count += hunk.current.count + hunk.previous.count;
+	}
+	return count;
+}
+
 export function parseGitFileDiff(data: string, includeRawContent = false): ParsedGitDiffHunks | undefined {
-	using sw = maybeStopWatch('Git.parseFileDiff', { log: false, logLevel: 'debug' });
+	using sw = maybeStopWatch('Git.parseFileDiff', { log: { onlyExit: true, level: 'debug' } });
 	if (!data) {
 		sw?.stop({ suffix: ` no data` });
 		return undefined;
@@ -191,7 +355,7 @@ export function parseGitFileDiff(data: string, includeRawContent = false): Parse
 }
 
 export function parseGitDiffNameStatusFiles(data: string, repoPath: string): GitFile[] | undefined {
-	using sw = maybeStopWatch('Git.parseDiffNameStatusFiles', { log: false, logLevel: 'debug' });
+	using sw = maybeStopWatch('Git.parseDiffNameStatusFiles', { log: { onlyExit: true, level: 'debug' } });
 	if (!data) {
 		sw?.stop({ suffix: ` no data` });
 		return undefined;
@@ -224,7 +388,7 @@ export function parseGitDiffNameStatusFiles(data: string, repoPath: string): Git
 }
 
 export function parseGitApplyFiles(container: Container, data: string, repoPath: string): GitFileChange[] {
-	using sw = maybeStopWatch('Git.parseApplyFiles', { log: false, logLevel: 'debug' });
+	using sw = maybeStopWatch('Git.parseApplyFiles', { log: { onlyExit: true, level: 'debug' } });
 	if (!data) {
 		sw?.stop({ suffix: ` no data` });
 		return [];
@@ -255,7 +419,7 @@ export function parseGitApplyFiles(container: Container, data: string, repoPath:
 		line = line.trim();
 		if (!line) continue;
 
-		const match = /(rename) (.*?)\{?([^{]+?)\s+=>\s+(.+?)\}?(?: \(\d+%\))|(create|delete) mode \d+ (.+)/.exec(line);
+		const match = applyRenameSummaryRegex.exec(line);
 		if (match == null) continue;
 
 		let [, rename, renameRoot, renameOriginalPath, renamePath, createOrDelete, createOrDeletePath] = match;
@@ -300,7 +464,7 @@ export function parseGitApplyFiles(container: Container, data: string, repoPath:
 }
 
 export function parseGitDiffShortStat(data: string): GitDiffShortStat | undefined {
-	using sw = maybeStopWatch('Git.parseDiffShortStat', { log: false, logLevel: 'debug' });
+	using sw = maybeStopWatch('Git.parseDiffShortStat', { log: { onlyExit: true, level: 'debug' } });
 	if (!data) {
 		sw?.stop({ suffix: ` no data` });
 		return undefined;

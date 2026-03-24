@@ -1,27 +1,27 @@
 import type { Uri } from 'vscode';
-import { serializeJsonReplacer } from '@env/json';
-import type { Container } from '../container';
-import type { Branded } from './brand';
+import { serializeJsonReplacer } from '@env/json.js';
+import type { Container } from '../container.js';
+import type { Branded } from './brand.js';
 
 // prettier-ignore
-export type Serialized<T> =
+export type Serialized<T, TDate extends number | string = number> =
 	// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-	T extends Function | Error | Container
+	T extends Error |Function |  Container
 	? never
 	: T extends Date
-	? number
+	? TDate
 	: T extends Uri | RegExp
 	? string
 	: T extends Map<infer K, infer V>
-	? [Serialized<K>, Serialized<V>][]
+	? [Serialized<K, TDate>, Serialized<V, TDate>][]
 	: T extends Set<infer U>
-	? Serialized<U>[]
+	? Serialized<U, TDate>[]
 	: T extends Branded<infer U, any>
 	? U
 	: T extends any[]
-	? Serialized<T[number]>[]
+	? Serialized<T[number], TDate>[]
 	: T extends object
-	? { [K in keyof T]: T[K] extends Date ? number : Serialized<T[K]> }
+	? { [K in keyof T]: T[K] extends Date ? TDate : Serialized<T[K], TDate> }
 	: T;
 
 export function serialize<T extends object>(obj: T): Serialized<T>;

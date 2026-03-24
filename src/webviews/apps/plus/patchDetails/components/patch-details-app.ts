@@ -1,12 +1,11 @@
-import { Badge, defineGkElement, Menu, MenuItem, Popover } from '@gitkraken/shared-web-components';
 import { html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { when } from 'lit/directives/when.js';
-import type { DraftDetails, Mode, State } from '../../../../plus/patchDetails/protocol';
-import { GlElement } from '../../../shared/components/element';
-import type { PatchDetailsApp } from '../patchDetails';
-import './gl-draft-details';
-import './gl-patch-create';
+import type { DraftDetails, Mode, State } from '../../../../plus/patchDetails/protocol.js';
+import { GlElement } from '../../../shared/components/element.js';
+import type { PatchDetailsApp } from '../patchDetails.js';
+import './gl-draft-details.js';
+import './gl-patch-create.js';
 
 interface ExplainState {
 	cancelled?: boolean;
@@ -58,12 +57,6 @@ export class GlPatchDetailsApp extends GlElement {
 	@property({ attribute: false, type: Object })
 	app?: PatchDetailsApp;
 
-	constructor() {
-		super();
-
-		defineGkElement(Badge, Popover, Menu, MenuItem);
-	}
-
 	get wipChangesCount(): number {
 		if (this.state?.create == null) return 0;
 
@@ -90,7 +83,7 @@ export class GlPatchDetailsApp extends GlElement {
 		// return file length total and repo/branch names
 		return {
 			count: state.files,
-			branches: Array.from(state.on).join(', '),
+			branches: [...state.on].join(', '),
 		};
 	}
 

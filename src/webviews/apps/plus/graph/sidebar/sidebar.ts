@@ -1,17 +1,17 @@
 import { consume } from '@lit/context';
 import { Task } from '@lit/task';
+import { SignalWatcher } from '@lit-labs/signals';
 import { css, html, LitElement, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import type { State } from '../../../../plus/graph/protocol';
-import { DidChangeNotification, GetCountsRequest } from '../../../../plus/graph/protocol';
-import { ipcContext } from '../../../shared/contexts/ipc';
-import type { Disposable } from '../../../shared/events';
-import type { HostIpc } from '../../../shared/ipc';
-import { emitTelemetrySentEvent } from '../../../shared/telemetry';
-import { stateContext } from '../context';
-import '../../../shared/components/code-icon';
-import '../../../shared/components/overlays/tooltip';
+import { DidChangeNotification, GetCountsRequest } from '../../../../plus/graph/protocol.js';
+import { ipcContext } from '../../../shared/contexts/ipc.js';
+import type { Disposable } from '../../../shared/events.js';
+import type { HostIpc } from '../../../shared/ipc.js';
+import { emitTelemetrySentEvent } from '../../../shared/telemetry.js';
+import { graphStateContext } from '../context.js';
+import '../../../shared/components/code-icon.js';
+import '../../../shared/components/overlays/tooltip.js';
 
 interface Icon {
 	type: IconTypes;
@@ -31,8 +31,14 @@ const icons: Icon[] = [
 type Counts = Record<IconTypes, number | undefined>;
 
 @customElement('gl-graph-sidebar')
-export class GlGraphSideBar extends LitElement {
+export class GlGraphSideBar extends SignalWatcher(LitElement) {
 	static override styles = css`
+		:focus,
+		:focus-within,
+		:focus-visible {
+			outline-color: var(--vscode-focusBorder);
+		}
+
 		.sidebar {
 			box-sizing: border-box;
 			display: flex;
@@ -85,8 +91,8 @@ export class GlGraphSideBar extends LitElement {
 	@consume({ context: ipcContext })
 	private _ipc!: HostIpc;
 
-	@consume({ context: stateContext, subscribe: true })
-	private readonly _state!: State;
+	@consume({ context: graphStateContext, subscribe: true })
+	private readonly _state!: typeof graphStateContext.__context__;
 
 	private _disposable: Disposable | undefined;
 	private _countsTask = new Task(this, {

@@ -7,16 +7,16 @@ import type {
 	ThemableDecorationRenderOptions,
 } from 'vscode';
 import { OverviewRulerLane, ThemeColor, Uri, window } from 'vscode';
-import type { Config } from '../config';
-import { GlyphChars } from '../constants';
-import type { Colors } from '../constants.colors';
-import type { CommitFormatOptions } from '../git/formatters/commitFormatter';
-import { CommitFormatter } from '../git/formatters/commitFormatter';
-import type { GitCommit } from '../git/models/commit';
-import { configuration } from '../system/-webview/configuration';
-import { scale, toRgba } from '../system/color';
-import { getWidth, interpolate, pad } from '../system/string';
-import type { BlameFontOptions } from './gutterBlameAnnotationProvider';
+import type { Config } from '../config.js';
+import type { Colors } from '../constants.colors.js';
+import { GlyphChars } from '../constants.js';
+import type { CommitFormatOptions } from '../git/formatters/commitFormatter.js';
+import { CommitFormatter } from '../git/formatters/commitFormatter.js';
+import type { GitCommit } from '../git/models/commit.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { scale, toRgba } from '../system/color.js';
+import { getWidth, interpolate, pad } from '../system/string.js';
+import type { BlameFontOptions } from './gutterBlameAnnotationProvider.js';
 
 export interface ComputedHeatmap {
 	coldThresholdTimestamp: number;
@@ -32,12 +32,15 @@ export type Decoration<T extends Range[] | DecorationOptions[] = Range[] | Decor
 };
 
 interface RenderOptions
-	extends DecorationInstanceRenderOptions,
+	extends
+		DecorationInstanceRenderOptions,
 		ThemableDecorationRenderOptions,
 		ThemableDecorationAttachmentRenderOptions {
 	height?: string;
 	uncommittedColor?: string | ThemeColor;
 }
+
+const spaceRegex = / /g;
 
 const defaultHeatmapHotColor = '#f66a0a';
 const defaultHeatmapColdColor = '#0a60f6';
@@ -160,7 +163,7 @@ export function getGutterDecoration(
 	}
 
 	const message = CommitFormatter.fromTemplate(format, commit, dateFormatOrFormatOptions);
-	decoration.renderOptions!.before!.contentText = pad(message.replace(/ /g, GlyphChars.Space), 1, 1);
+	decoration.renderOptions!.before!.contentText = pad(message.replace(spaceRegex, GlyphChars.Space), 1, 1);
 
 	return decoration;
 }
@@ -258,7 +261,7 @@ export function getInlineDecoration(
 			after: {
 				backgroundColor: new ThemeColor('gitlens.trailingLineBackgroundColor' satisfies Colors),
 				color: new ThemeColor('gitlens.trailingLineForegroundColor' satisfies Colors),
-				contentText: pad(message.replace(/ /g, GlyphChars.Space), 1, 1),
+				contentText: pad(message.replace(spaceRegex, GlyphChars.Space), 1, 1),
 				fontWeight: fontOptions?.weight ?? 'normal',
 				fontStyle: fontOptions?.style ?? 'normal',
 				// Pull the decoration out of the document flow if we want to be scrollable

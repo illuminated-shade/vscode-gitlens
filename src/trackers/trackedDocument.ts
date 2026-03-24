@@ -1,18 +1,18 @@
 import type { Disposable, TextDocument } from 'vscode';
-import type { Container } from '../container';
-import { GitUri } from '../git/gitUri';
-import type { GitBlame } from '../git/models/blame';
-import type { ParsedGitDiffHunks } from '../git/models/diff';
-import type { GitLog } from '../git/models/log';
-import { configuration } from '../system/-webview/configuration';
-import { isActiveTextDocument, isVisibleTextDocument } from '../system/-webview/vscode/documents';
-import { getOpenTextEditorIfVisible } from '../system/-webview/vscode/editors';
-import { debug, logName } from '../system/decorators/log';
-import type { Deferrable } from '../system/function/debounce';
-import { debounce } from '../system/function/debounce';
-import { Logger } from '../system/logger';
-import { getLogScope } from '../system/logger.scope';
-import type { DocumentBlameStateChangeEvent, GitDocumentTracker } from './documentTracker';
+import type { Container } from '../container.js';
+import { GitUri } from '../git/gitUri.js';
+import type { GitBlame } from '../git/models/blame.js';
+import type { ParsedGitDiffHunks } from '../git/models/diff.js';
+import type { GitLog } from '../git/models/log.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { isActiveTextDocument, isVisibleTextDocument } from '../system/-webview/vscode/documents.js';
+import { getOpenTextEditorIfVisible } from '../system/-webview/vscode/editors.js';
+import { logName, trace } from '../system/decorators/log.js';
+import type { Deferrable } from '../system/function/debounce.js';
+import { debounce } from '../system/function/debounce.js';
+import { Logger } from '../system/logger.js';
+import { getScopedLogger } from '../system/logger.scope.js';
+import type { DocumentBlameStateChangeEvent, GitDocumentTracker } from './documentTracker.js';
 
 interface CachedItem<T> {
 	item: Promise<T>;
@@ -96,7 +96,7 @@ export interface TrackedGitDocumentStatus {
 	dirtyIdle?: boolean;
 }
 
-@logName<TrackedGitDocument>(c => `TrackedGitDocument(${Logger.toLoggable(c.document)})`)
+@logName(c => `TrackedGitDocument(${Logger.toLoggable(c.document)})`)
 export class TrackedGitDocument implements Disposable {
 	static async create(
 		container: Container,
@@ -137,7 +137,7 @@ export class TrackedGitDocument implements Disposable {
 
 	private _loading = false;
 
-	@debug()
+	@trace()
 	private async initialize(visible: boolean): Promise<void> {
 		this._uri = await GitUri.fromUri(this.document.uri);
 		if (this._disposed) return;
@@ -195,18 +195,18 @@ export class TrackedGitDocument implements Disposable {
 		return document === this.document;
 	}
 
-	@debug()
+	@trace()
 	refresh(reason: 'changed' | 'saved' | 'visible' | 'repositoryChanged'): void {
 		if (this._pendingUpdates == null && reason === 'visible') return;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		this._blameFailure = undefined;
 		this._dirtyIdle = false;
 
 		if (this.state != null) {
 			this.state = undefined;
-			Logger.log(scope, `Reset state, reason=${reason}`);
+			scope?.debug(`Reset state, reason=${reason}`);
 		}
 
 		switch (reason) {
@@ -253,7 +253,7 @@ export class TrackedGitDocument implements Disposable {
 		this._forceDirtyStateChangeOnNextDocumentChange = true;
 	}
 
-	@debug()
+	@trace()
 	private async update(): Promise<void> {
 		const updates = this._pendingUpdates;
 		this._pendingUpdates = undefined;

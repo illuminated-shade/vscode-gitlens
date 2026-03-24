@@ -1,9 +1,9 @@
 import type { TemplateResult } from 'lit';
 import { html, nothing } from 'lit';
-import type { GitFileChangeShape } from '../../../../../git/models/fileChange';
-import type { HierarchicalItem } from '../../../../../system/array';
-import { makeHierarchical } from '../../../../../system/array';
-import { GlElement } from '../../../shared/components/element';
+import type { GitFileChangeShape } from '../../../../../git/models/fileChange.js';
+import type { HierarchicalItem } from '../../../../../system/array.js';
+import { makeHierarchical } from '../../../../../system/array.js';
+import { GlElement } from '../../../shared/components/element.js';
 import type {
 	TreeItemAction,
 	TreeItemActionDetail,
@@ -11,10 +11,10 @@ import type {
 	TreeItemCheckedDetail,
 	TreeItemSelectionDetail,
 	TreeModel,
-} from '../../../shared/components/tree/base';
-import '../../../shared/components/tree/tree-generator';
-import '../../../shared/components/skeleton-loader';
-import '../../../shared/components/actions/action-item';
+} from '../../../shared/components/tree/base.js';
+import '../../../shared/components/tree/tree-generator.js';
+import '../../../shared/components/skeleton-loader.js';
+import '../../../shared/components/actions/action-item.js';
 
 export class GlTreeBase extends GlElement {
 	protected onTreeItemActionClicked?(_e: CustomEvent<TreeItemActionDetail>): void;
@@ -107,7 +107,7 @@ export class GlTreeBase extends GlElement {
 
 		let model: TreeModel;
 		if (item.value == null) {
-			model = this.folderToTreeModel(item.name, options);
+			model = this.folderToTreeModel(item.name, item.relativePath, options);
 		} else {
 			model = this.fileToTreeModel(item.value, options);
 		}
@@ -128,11 +128,11 @@ export class GlTreeBase extends GlElement {
 		return model;
 	}
 
-	protected folderToTreeModel(name: string, options?: Partial<TreeItemBase>): TreeModel {
+	protected folderToTreeModel(name: string, relativePath: string, options?: Partial<TreeItemBase>): TreeModel {
 		return {
 			branch: false,
 			expanded: true,
-			path: name,
+			path: relativePath,
 			level: 1,
 			checkable: false,
 			checked: false,
@@ -173,7 +173,7 @@ export class GlTreeBase extends GlElement {
 			level: 1,
 			checkable: true,
 			checked: true,
-			icon: 'repo',
+			icon: 'gl-repository',
 			label: name,
 			description: description,
 			context: [path],

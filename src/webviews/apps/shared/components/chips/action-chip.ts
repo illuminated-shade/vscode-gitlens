@@ -1,19 +1,15 @@
 import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, query } from 'lit/decorators.js';
-import { linkStyles, ruleStyles } from '../../../plus/shared/components/vscode.css';
-import { handleUnsafeOverlayContent } from '../overlays/overlays.utils';
-import { focusOutline } from '../styles/lit/a11y.css';
-import '../overlays/popover';
-import '../overlays/tooltip';
-import '../code-icon';
+import { ifDefined } from 'lit/directives/if-defined.js';
+import { linkStyles, ruleStyles } from '../../../plus/shared/components/vscode.css.js';
+import { handleUnsafeOverlayContent } from '../overlays/overlays.utils.js';
+import { focusOutline } from '../styles/lit/a11y.css.js';
+import '../overlays/popover.js';
+import '../overlays/tooltip.js';
+import '../code-icon.js';
 
 @customElement('gl-action-chip')
 export class ActionChip extends LitElement {
-	static override shadowRootOptions: ShadowRootInit = {
-		...LitElement.shadowRootOptions,
-		delegatesFocus: true,
-	};
-
 	static override styles = [
 		linkStyles,
 		ruleStyles,
@@ -52,7 +48,7 @@ export class ActionChip extends LitElement {
 				justify-content: center;
 				align-items: center;
 				gap: 0.2rem;
-				vertical-align: middle;
+				/* vertical-align: middle; */
 				color: inherit;
 				min-width: 2rem;
 				height: 2rem;
@@ -60,6 +56,9 @@ export class ActionChip extends LitElement {
 				padding: 0.2rem;
 				text-decoration: none;
 				cursor: pointer;
+				background: none;
+				border: none;
+				font: inherit;
 			}
 			.chip:hover {
 				text-decoration: none;
@@ -75,7 +74,7 @@ export class ActionChip extends LitElement {
 			::slotted(*) {
 				padding-inline-end: 0.2rem;
 				vertical-align: middle;
-				text-transform: capitalize;
+				text-transform: var(--chip-text-transform, capitalize);
 			}
 		`,
 	];
@@ -95,8 +94,8 @@ export class ActionChip extends LitElement {
 	@property({ type: Boolean })
 	disabled = false;
 
-	@query('a')
-	private defaultFocusEl!: HTMLAnchorElement;
+	@query('.chip')
+	private defaultFocusEl!: HTMLElement;
 
 	override render(): unknown {
 		if (!this.label) {
@@ -114,18 +113,25 @@ export class ActionChip extends LitElement {
 	}
 
 	private renderContent() {
+		const slot = this.overlay === 'popover' ? 'anchor' : nothing;
+		const iconHtml = html`<code-icon
+			part="icon"
+			icon="${this.icon}"
+			modifier="${ifDefined(this.icon === 'loading' ? 'spin' : '')}"
+		></code-icon>`;
+
+		if (this.href) {
+			return html`
+				<a class="chip" part="base" ?disabled=${this.disabled} href=${this.href} slot=${slot}>
+					${iconHtml}<slot></slot>
+				</a>
+			`;
+		}
+
 		return html`
-			<a
-				class="chip"
-				part="base"
-				role="${!this.href ? 'button' : nothing}"
-				type="${!this.href ? 'button' : nothing}"
-				?disabled=${this.disabled}
-				href=${this.href ?? nothing}
-				slot=${this.overlay === 'popover' ? 'anchor' : nothing}
-			>
-				<code-icon part="icon" icon="${this.icon}"></code-icon><slot></slot>
-			</a>
+			<button class="chip" part="base" type="button" ?disabled=${this.disabled} slot=${slot}>
+				${iconHtml}<slot></slot>
+			</button>
 		`;
 	}
 

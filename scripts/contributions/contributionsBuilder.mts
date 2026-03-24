@@ -32,6 +32,7 @@ export const menuLocations: MenuLocations[] = [
 	'explorer/context',
 	'extension/context',
 	'git.commit',
+	'git.changes',
 	'menuBar/edit/copy',
 	'scm/title',
 	'scm/sourceControl',
@@ -453,8 +454,8 @@ const orderedContextKeysByLocation = new Map<string, [primary: string[], ...(str
 		'view/item/context',
 		[
 			['viewItem'],
-			'gitlens:views:scm:grouped:view',
 			'view',
+			'gitlens:views:scm:grouped:view',
 			'listDoubleSelection',
 			'listMultiSelection',
 			...orderedContextKeys,
@@ -476,8 +477,8 @@ const orderedContextKeysByLocation = new Map<string, [primary: string[], ...(str
 		[
 			[
 				'viewItem',
-				'gitlens:views:scm:grouped:view',
 				'view',
+				'gitlens:views:scm:grouped:view',
 				'webviewItem',
 				'webviewItems',
 				'webviewItemGroup',

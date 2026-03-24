@@ -1,18 +1,18 @@
 import type { Range, Uri } from 'vscode';
 import { env } from 'vscode';
-import type { AutolinkReference, DynamicAutolinkReference } from '../../autolinks/models/autolinks';
-import type { Source } from '../../constants.telemetry';
-import { openUrl } from '../../system/-webview/vscode/uris';
-import { memoize } from '../../system/decorators/-webview/memoize';
-import { encodeUrl } from '../../system/encoding';
-import { getSettledValue } from '../../system/promise';
-import type { ProviderReference } from '../models/remoteProvider';
-import type { CreatePullRequestRemoteResource, RemoteResource } from '../models/remoteResource';
-import { RemoteResourceType } from '../models/remoteResource';
-import type { Repository } from '../models/repository';
-import type { GkProviderId } from '../models/repositoryIdentities';
-import type { ResourceDescriptor } from '../models/resourceDescriptor';
-import type { GitRevisionRangeNotation } from '../models/revision';
+import type { AutolinkReference, DynamicAutolinkReference } from '../../autolinks/models/autolinks.js';
+import type { Source } from '../../constants.telemetry.js';
+import { openUrl } from '../../system/-webview/vscode/uris.js';
+import { memoize } from '../../system/decorators/memoize.js';
+import { encodeUrl } from '../../system/encoding.js';
+import { getSettledValue } from '../../system/promise.js';
+import type { ProviderReference } from '../models/remoteProvider.js';
+import type { CreatePullRequestRemoteResource, RemoteResource } from '../models/remoteResource.js';
+import { RemoteResourceType } from '../models/remoteResource.js';
+import type { Repository } from '../models/repository.js';
+import type { GkProviderId } from '../models/repositoryIdentities.js';
+import type { ResourceDescriptor } from '../models/resourceDescriptor.js';
+import type { GitRevisionRangeNotation } from '../models/revision.js';
 
 export type RemoteProviderId =
 	| 'azure-devops'
@@ -150,7 +150,7 @@ export abstract class RemoteProvider<T extends ResourceDescriptor = ResourceDesc
 			case RemoteResourceType.File:
 				return this.getUrlForFile(
 					resource.fileName,
-					resource.branchOrTag != null ? resource.branchOrTag : undefined,
+					resource.branchOrTag ?? undefined,
 					undefined,
 					resource.range,
 				);
@@ -159,8 +159,8 @@ export abstract class RemoteProvider<T extends ResourceDescriptor = ResourceDesc
 			case RemoteResourceType.Revision:
 				return this.getUrlForFile(
 					resource.fileName,
-					resource.branchOrTag != null ? resource.branchOrTag : undefined,
-					resource.sha != null ? resource.sha : undefined,
+					resource.branchOrTag ?? undefined,
+					resource.sha ?? undefined,
 					resource.range,
 				);
 			// TODO@axosoft-ramint needs to be implemented to support remote urls for tags
@@ -234,6 +234,7 @@ export abstract class RemoteProvider<T extends ResourceDescriptor = ResourceDesc
 		} else {
 			urlPromises.push(this.url(resource));
 		}
+		// eslint-disable-next-line @typescript-eslint/await-thenable
 		const urls: string[] = (await Promise.allSettled(urlPromises))
 			.map(r => getSettledValue(r))
 			.filter(r => r != null);

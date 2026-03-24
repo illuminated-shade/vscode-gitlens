@@ -1,10 +1,12 @@
-import type { Config } from '../../config';
-import type { IpcScope, WebviewState } from '../protocol';
-import { IpcNotification, IpcRequest } from '../protocol';
+import type { Config } from '../../config.js';
+import type { IssuesCloudHostIntegrationId } from '../../constants.integrations.js';
+import type { IpcScope } from '../ipc/models/ipc.js';
+import { IpcNotification, IpcRequest } from '../ipc/models/ipc.js';
+import type { WebviewState } from '../protocol.js';
 
 export const scope: IpcScope = 'settings';
 
-export interface State extends WebviewState {
+export interface State extends WebviewState<'gitlens.settings'> {
 	version: string;
 	config: Config;
 	customSettings?: Record<string, boolean>;
@@ -12,6 +14,7 @@ export interface State extends WebviewState {
 	scopes: ['user' | 'workspace', string][];
 	hasAccount: boolean;
 	hasConnectedJira: boolean;
+	hasConnectedLinear: boolean;
 }
 
 // REQUESTS
@@ -43,10 +46,9 @@ export interface DidChangeAccountParams {
 }
 export const DidChangeAccountNotification = new IpcNotification<DidChangeAccountParams>(scope, 'didChangeAccount');
 
-export interface DidChangeConnectedJiraParams {
-	hasConnectedJira: boolean;
+export interface DidChangeIssueIntegrationConnectedParams {
+	integrationId: IssuesCloudHostIntegrationId;
+	connected: boolean;
 }
-export const DidChangeConnectedJiraNotification = new IpcNotification<DidChangeConnectedJiraParams>(
-	scope,
-	'didChangeConnectedJira',
-);
+export const DidChangeIssueIntegrationConnectedNotification =
+	new IpcNotification<DidChangeIssueIntegrationConnectedParams>(scope, 'didChangeIssueIntegrationConnected');

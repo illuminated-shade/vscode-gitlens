@@ -21,30 +21,30 @@ import {
 	window,
 	workspace,
 } from 'vscode';
-import type { AnnotationsToggleMode, FileAnnotationType } from '../config';
-import type { AnnotationStatus } from '../constants';
-import type { Colors, CoreColors } from '../constants.colors';
-import type { Container } from '../container';
-import { registerCommand } from '../system/-webview/command';
-import { configuration } from '../system/-webview/configuration';
-import { setContext } from '../system/-webview/context';
-import type { KeyboardScope } from '../system/-webview/keyboard';
-import { UriSet } from '../system/-webview/uriMap';
-import { isTrackableTextEditor } from '../system/-webview/vscode/editors';
-import { debug, log } from '../system/decorators/log';
-import { once } from '../system/event';
-import type { Deferrable } from '../system/function/debounce';
-import { debounce } from '../system/function/debounce';
-import { find } from '../system/iterable';
-import { basename } from '../system/path';
+import type { AnnotationsToggleMode, FileAnnotationType } from '../config.js';
+import type { Colors, CoreColors } from '../constants.colors.js';
+import type { AnnotationStatus } from '../constants.js';
+import type { Container } from '../container.js';
+import { registerCommand } from '../system/-webview/command.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { setContext } from '../system/-webview/context.js';
+import type { KeyboardScope } from '../system/-webview/keyboard.js';
+import { UriSet } from '../system/-webview/uriMap.js';
+import { isTrackableTextEditor } from '../system/-webview/vscode/editors.js';
+import { debug, trace } from '../system/decorators/log.js';
+import { once } from '../system/event.js';
+import type { Deferrable } from '../system/function/debounce.js';
+import { debounce } from '../system/function/debounce.js';
+import { find } from '../system/iterable.js';
+import { basename } from '../system/path.js';
 import type {
 	DocumentBlameStateChangeEvent,
 	DocumentDirtyIdleTriggerEvent,
 	DocumentDirtyStateChangeEvent,
-} from '../trackers/documentTracker';
-import type { AnnotationContext, AnnotationProviderBase, TextEditorCorrelationKey } from './annotationProvider';
-import { getEditorCorrelationKey, getEditorCorrelationKeyFromTab } from './annotationProvider';
-import type { ChangesAnnotationContext } from './gutterChangesAnnotationProvider';
+} from '../trackers/documentTracker.js';
+import type { AnnotationContext, AnnotationProviderBase, TextEditorCorrelationKey } from './annotationProvider.js';
+import { getEditorCorrelationKey, getEditorCorrelationKeyFromTab } from './annotationProvider.js';
+import type { ChangesAnnotationContext } from './gutterChangesAnnotationProvider.js';
 
 export const Decorations = {
 	gutterBlameAnnotation: window.createTextEditorDecorationType({
@@ -280,7 +280,7 @@ export class FileAnnotationController implements Disposable {
 		return this._toggleModes.get(annotationType) ?? 'file';
 	}
 
-	@log<FileAnnotationController['clear']>({ args: { 0: e => e?.document.uri.toString(true) } })
+	@debug({ args: e => ({ editor: e }) })
 	clear(editor: TextEditor | undefined): Promise<void> | undefined {
 		if (this.isInWindowToggle()) return this.clearAll();
 		if (editor == null) return;
@@ -288,7 +288,7 @@ export class FileAnnotationController implements Disposable {
 		return this.clearCore(getEditorCorrelationKey(editor), true);
 	}
 
-	@log()
+	@debug()
 	async clearAll(): Promise<void> {
 		this._windowAnnotationType = undefined;
 
@@ -334,10 +334,12 @@ export class FileAnnotationController implements Disposable {
 	}
 
 	private readonly _annotatedUris = new UriSet();
+	private readonly _annotatedChangesUris = new UriSet();
 	private readonly _computingUris = new UriSet();
 
 	async onProviderEditorStatusChanged(
 		editor: TextEditor | undefined,
+		annotationType: FileAnnotationType | undefined,
 		status: AnnotationStatus | undefined,
 	): Promise<void> {
 		if (editor == null) return;
@@ -346,10 +348,11 @@ export class FileAnnotationController implements Disposable {
 		let windowStatus;
 
 		if (this.isInWindowToggle()) {
-			windowStatus = status;
+			windowStatus = status ? (annotationType ? (`${status}:${annotationType}` as const) : status) : undefined;
 
 			changed = Boolean(this._annotatedUris.size || this._computingUris.size);
 			this._annotatedUris.clear();
+			this._annotatedChangesUris.clear();
 			this._computingUris.clear();
 		} else {
 			windowStatus = undefined;
@@ -373,11 +376,19 @@ export class FileAnnotationController implements Disposable {
 					if (provider == null) {
 						if (this._annotatedUris.has(uri)) {
 							this._annotatedUris.delete(uri);
+							this._annotatedChangesUris.delete(uri);
 							changed = true;
 						}
-					} else if (!this._annotatedUris.has(uri)) {
-						this._annotatedUris.add(uri);
-						changed = true;
+					} else {
+						if (!this._annotatedUris.has(uri)) {
+							this._annotatedUris.add(uri);
+							changed = true;
+						}
+
+						if (provider.annotationType === 'changes' && !this._annotatedChangesUris.has(uri)) {
+							this._annotatedChangesUris.add(uri);
+							changed = true;
+						}
 					}
 
 					if (this._computingUris.has(uri)) {
@@ -389,6 +400,7 @@ export class FileAnnotationController implements Disposable {
 				default:
 					if (this._annotatedUris.has(uri)) {
 						this._annotatedUris.delete(uri);
+						this._annotatedChangesUris.delete(uri);
 						changed = true;
 					}
 
@@ -406,17 +418,13 @@ export class FileAnnotationController implements Disposable {
 			setContext('gitlens:window:annotated', windowStatus),
 			setContext('gitlens:tabs:annotated:computing', [...this._computingUris]),
 			setContext('gitlens:tabs:annotated', [...this._annotatedUris]),
+			setContext('gitlens:tabs:annotated:changes', [...this._annotatedChangesUris]),
 		]);
 	}
 
 	async show(editor: TextEditor | undefined, type: FileAnnotationType, context?: AnnotationContext): Promise<boolean>;
 	async show(editor: TextEditor | undefined, type: 'changes', context?: ChangesAnnotationContext): Promise<boolean>;
-	@log<FileAnnotationController['show']>({
-		args: {
-			0: e => e?.document.uri.toString(true),
-			2: false,
-		},
-	})
+	@debug({ args: (editor, type) => ({ editor: editor, type: type }) })
 	async show(
 		editor: TextEditor | undefined,
 		type: FileAnnotationType,
@@ -463,12 +471,12 @@ export class FileAnnotationController implements Disposable {
 		const provider = await window.withProgress(
 			{ location: ProgressLocation.Window },
 			async (progress: Progress<{ message: string }>) => {
-				void this.onProviderEditorStatusChanged(editor, 'computing');
+				void this.onProviderEditorStatusChanged(editor, type, 'computing');
 
 				const computingAnnotations = this.showAnnotationsCore(currentProvider, editor, type, context, progress);
 				void (await computingAnnotations);
 
-				void this.onProviderEditorStatusChanged(editor, 'computed');
+				void this.onProviderEditorStatusChanged(editor, type, 'computed');
 
 				return computingAnnotations;
 			},
@@ -489,12 +497,7 @@ export class FileAnnotationController implements Disposable {
 		context?: ChangesAnnotationContext,
 		on?: boolean,
 	): Promise<boolean>;
-	@log<FileAnnotationController['toggle']>({
-		args: {
-			0: e => e?.document.uri.toString(true),
-			2: false,
-		},
-	})
+	@debug({ args: (editor, type, _, on) => ({ editor: editor, type: type, on: on }) })
 	async toggle(
 		editor: TextEditor | undefined,
 		type: FileAnnotationType,
@@ -533,13 +536,13 @@ export class FileAnnotationController implements Disposable {
 		return this.show(editor, type, context);
 	}
 
-	@log()
+	@debug()
 	nextChange(): void {
 		const provider = this.getProvider(window.activeTextEditor);
 		provider?.nextChange?.();
 	}
 
-	@log()
+	@debug()
 	previousChange(): void {
 		const provider = this.getProvider(window.activeTextEditor);
 		provider?.previousChange?.();
@@ -549,22 +552,20 @@ export class FileAnnotationController implements Disposable {
 		if (!configuration.get('fileAnnotations.dismissOnEscape')) return;
 
 		// Allows pressing escape to exit the annotations
-		if (this._keyboardScope == null) {
-			this._keyboardScope = await this.container.keyboard.beginScope({
-				escape: {
-					onDidPressKey: async () => {
-						const e = this._editor;
-						if (e == null) return undefined;
+		this._keyboardScope ??= await this.container.keyboard.beginScope({
+			escape: {
+				onDidPressKey: async () => {
+					const e = this._editor;
+					if (e == null) return undefined;
 
-						await this.clear(e);
-						return undefined;
-					},
+					await this.clear(e);
+					return undefined;
 				},
-			});
-		}
+			},
+		});
 	}
 
-	@log()
+	@debug()
 	private async clearCore(key: TextEditorCorrelationKey, force?: boolean) {
 		const provider = this._annotationProviders.get(key);
 		if (provider == null) return;
@@ -574,7 +575,7 @@ export class FileAnnotationController implements Disposable {
 
 		if (!this._annotationProviders.size || key === getEditorCorrelationKey(this._editor)) {
 			if (this._editor != null) {
-				void this.onProviderEditorStatusChanged(this._editor, undefined);
+				void this.onProviderEditorStatusChanged(this._editor, undefined, undefined);
 			}
 
 			await this.detachKeyboardHook();
@@ -632,11 +633,11 @@ export class FileAnnotationController implements Disposable {
 		switch (type) {
 			case 'blame': {
 				const { GutterBlameAnnotationProvider } = await import(
-					/* webpackChunkName: "annotations" */ './gutterBlameAnnotationProvider'
+					/* webpackChunkName: "annotations" */ './gutterBlameAnnotationProvider.js'
 				);
 				provider = new GutterBlameAnnotationProvider(
 					this.container,
-					e => this.onProviderEditorStatusChanged(e.editor, e.status),
+					e => this.onProviderEditorStatusChanged(e.editor, type, e.status),
 					editor,
 					trackedDocument,
 				);
@@ -644,11 +645,11 @@ export class FileAnnotationController implements Disposable {
 			}
 			case 'changes': {
 				const { GutterChangesAnnotationProvider } = await import(
-					/* webpackChunkName: "annotations" */ './gutterChangesAnnotationProvider'
+					/* webpackChunkName: "annotations" */ './gutterChangesAnnotationProvider.js'
 				);
 				provider = new GutterChangesAnnotationProvider(
 					this.container,
-					e => this.onProviderEditorStatusChanged(e.editor, e.status),
+					e => this.onProviderEditorStatusChanged(e.editor, type, e.status),
 					editor,
 					trackedDocument,
 				);
@@ -656,11 +657,11 @@ export class FileAnnotationController implements Disposable {
 			}
 			case 'heatmap': {
 				const { GutterHeatmapBlameAnnotationProvider } = await import(
-					/* webpackChunkName: "annotations" */ './gutterHeatmapBlameAnnotationProvider'
+					/* webpackChunkName: "annotations" */ './gutterHeatmapBlameAnnotationProvider.js'
 				);
 				provider = new GutterHeatmapBlameAnnotationProvider(
 					this.container,
-					e => this.onProviderEditorStatusChanged(e.editor, e.status),
+					e => this.onProviderEditorStatusChanged(e.editor, type, e.status),
 					editor,
 					trackedDocument,
 				);
@@ -688,9 +689,9 @@ export class FileAnnotationController implements Disposable {
 		return undefined;
 	}
 
-	@debug({
-		singleLine: true,
-		if: function () {
+	@trace({
+		onlyExit: true,
+		when: function (this: FileAnnotationController) {
 			return this._annotationsDisposable == null;
 		},
 	})
@@ -709,9 +710,9 @@ export class FileAnnotationController implements Disposable {
 		);
 	}
 
-	@debug({
-		singleLine: true,
-		if: function () {
+	@trace({
+		onlyExit: true,
+		when: function (this: FileAnnotationController) {
 			return this._annotationsDisposable != null;
 		},
 	})

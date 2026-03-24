@@ -1,76 +1,89 @@
-import type { AuthenticationSession, CancellationToken } from 'vscode';
+import type { AuthenticationSession, CancellationToken, EventEmitter } from 'vscode';
 import { window } from 'vscode';
-import { GitCloudHostIntegrationId } from '../../../constants.integrations';
-import type { Account, UnidentifiedAuthor } from '../../../git/models/author';
-import type { DefaultBranch } from '../../../git/models/defaultBranch';
-import type { Issue, IssueShape } from '../../../git/models/issue';
-import type { IssueOrPullRequest } from '../../../git/models/issueOrPullRequest';
-import type { PullRequest, PullRequestMergeMethod, PullRequestState } from '../../../git/models/pullRequest';
-import type { RepositoryMetadata } from '../../../git/models/repositoryMetadata';
-import { getSettledValue } from '../../../system/promise';
-import { base64 } from '../../../system/string';
-import type { IntegrationAuthenticationProviderDescriptor } from '../authentication/integrationAuthenticationProvider';
-import { GitHostIntegration } from '../models/gitHostIntegration';
+import { base64 } from '@env/base64.js';
+import { GitCloudHostIntegrationId, GitSelfManagedHostIntegrationId } from '../../../constants.integrations.js';
+import type { Container } from '../../../container.js';
+import type { Account, UnidentifiedAuthor } from '../../../git/models/author.js';
+import type { DefaultBranch } from '../../../git/models/defaultBranch.js';
+import type { Issue, IssueShape } from '../../../git/models/issue.js';
+import type { IssueOrPullRequest, IssueOrPullRequestType } from '../../../git/models/issueOrPullRequest.js';
+import type { PullRequest, PullRequestMergeMethod, PullRequestState } from '../../../git/models/pullRequest.js';
+import type { RepositoryMetadata } from '../../../git/models/repositoryMetadata.js';
+import { flatSettled } from '../../../system/promise.js';
+import type { IntegrationAuthenticationProviderDescriptor } from '../authentication/integrationAuthenticationProvider.js';
+import type { IntegrationAuthenticationService } from '../authentication/integrationAuthenticationService.js';
+import type { ProviderAuthenticationSession, TokenWithInfo } from '../authentication/models.js';
+import { toTokenWithInfo } from '../authentication/models.js';
+import type { IntegrationConnectionChangeEvent } from '../integrationService.js';
+import { GitHostIntegration } from '../models/gitHostIntegration.js';
+import type { IntegrationKey } from '../models/integration.js';
 import type {
 	AzureOrganizationDescriptor,
 	AzureProjectDescriptor,
 	AzureProjectInputDescriptor,
 	AzureRemoteRepositoryDescriptor,
 	AzureRepositoryDescriptor,
-} from './azure/models';
-import type { ProviderPullRequest, ProviderRepository } from './models';
-import { fromProviderIssue, fromProviderPullRequest, providersMetadata } from './models';
+} from './azure/models.js';
+import type { ProviderPullRequest, ProviderRepository } from './models.js';
+import { fromProviderIssue, fromProviderPullRequest, providersMetadata } from './models.js';
+import type { ProvidersApi } from './providersApi.js';
 
-const metadata = providersMetadata[GitCloudHostIntegrationId.AzureDevOps];
-const authProvider = Object.freeze({ id: metadata.id, scopes: metadata.scopes });
-
-export class AzureDevOpsIntegration extends GitHostIntegration<
-	GitCloudHostIntegrationId.AzureDevOps,
-	AzureRepositoryDescriptor
-> {
-	readonly authProvider: IntegrationAuthenticationProviderDescriptor = authProvider;
-	readonly id = GitCloudHostIntegrationId.AzureDevOps;
-	protected readonly key = this.id;
-	readonly name: string = 'Azure DevOps';
-	get domain(): string {
-		return metadata.domain;
-	}
-
-	protected get apiBaseUrl(): string {
-		return 'https://dev.azure.com';
+export abstract class AzureDevOpsIntegrationBase<
+	TIntegrationId extends GitCloudHostIntegrationId.AzureDevOps | GitSelfManagedHostIntegrationId.AzureDevOpsServer,
+	TRepositoryDescriptor extends AzureRepositoryDescriptor = AzureRepositoryDescriptor,
+> extends GitHostIntegration<TIntegrationId, TRepositoryDescriptor> {
+	protected abstract get apiBaseUrl(): string;
+	protected getApiOptions(
+		session: ProviderAuthenticationSession,
+		doNotConvertToPat: boolean = false,
+	): {
+		tokenWithInfo: TokenWithInfo<TIntegrationId>;
+		options: { isPAT: boolean; baseUrl?: string };
+	} {
+		const usePat = !doNotConvertToPat;
+		const accessToken = usePat ? convertTokentoPAT(session.accessToken) : session.accessToken;
+		const tokenWithInfo = toTokenWithInfo<TIntegrationId>(this.id, session, accessToken);
+		return {
+			tokenWithInfo: tokenWithInfo,
+			options: { isPAT: usePat },
+		};
 	}
 
 	private _accounts: Map<string, Account | undefined> | undefined;
-	protected override async getProviderCurrentAccount({
-		accessToken,
-	}: AuthenticationSession): Promise<Account | undefined> {
+	protected override async getProviderCurrentAccount(
+		session: ProviderAuthenticationSession,
+	): Promise<Account | undefined> {
+		const { accessToken } = session;
 		this._accounts ??= new Map<string, Account | undefined>();
 
 		const cachedAccount = this._accounts.get(accessToken);
 		if (cachedAccount == null) {
-			const api = await this.getProvidersApi();
-			const user = await api.getCurrentUser(this.id, { accessToken: accessToken });
-			this._accounts.set(
-				accessToken,
-				user
-					? {
-							provider: this,
-							id: user.id,
-							name: user.name ?? undefined,
-							email: user.email ?? undefined,
-							avatarUrl: user.avatarUrl ?? undefined,
-							username: user.username ?? undefined,
-						}
-					: undefined,
-			);
+			const user = await this._requestForCurrentUser(session);
+			this._accounts.set(accessToken, user);
 		}
 
 		return this._accounts.get(accessToken);
 	}
 
+	protected async _requestForCurrentUser(session: ProviderAuthenticationSession): Promise<Account | undefined> {
+		const api = await this.getProvidersApi();
+		const { tokenWithInfo, options } = this.getApiOptions(session, true);
+		const user = await api.getCurrentUser(tokenWithInfo, options);
+		return user
+			? {
+					provider: this,
+					id: user.id,
+					name: user.name ?? undefined,
+					email: user.email ?? undefined,
+					avatarUrl: user.avatarUrl ?? undefined,
+					username: user.username ?? undefined,
+				}
+			: undefined;
+	}
+
 	private _organizations: Map<string, AzureOrganizationDescriptor[] | undefined> | undefined;
 	private async getProviderResourcesForUser(
-		session: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		force: boolean = false,
 	): Promise<AzureOrganizationDescriptor[] | undefined> {
 		this._organizations ??= new Map<string, AzureOrganizationDescriptor[] | undefined>();
@@ -82,10 +95,8 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 			const account = await this.getProviderCurrentAccount(session);
 			if (account?.id == null) return undefined;
 
-			const resources = await api.getAzureResourcesForUser(account.id, {
-				accessToken: convertTokentoPAT(accessToken),
-				isPAT: true,
-			});
+			const { tokenWithInfo, options } = this.getApiOptions(session);
+			const resources = await api.getAzureResourcesForUser(tokenWithInfo, account.id, options);
 			this._organizations.set(
 				accessToken,
 				resources != null ? resources.map(r => ({ ...r, key: r.id })) : undefined,
@@ -97,11 +108,12 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 
 	private _projects: Map<string, AzureProjectDescriptor[] | undefined> | undefined;
 	private async getProviderProjectsForResources(
-		{ accessToken }: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		resources: AzureOrganizationDescriptor[],
 		force: boolean = false,
 	): Promise<AzureProjectDescriptor[] | undefined> {
 		this._projects ??= new Map<string, AzureProjectDescriptor[] | undefined>();
+		const { accessToken } = session;
 
 		let resourcesWithoutProjects = [];
 		if (force) {
@@ -118,19 +130,13 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 
 		if (resourcesWithoutProjects.length > 0) {
 			const api = await this.getProvidersApi();
-			const azureProjects = (
-				await Promise.allSettled(
-					resourcesWithoutProjects.map(resource =>
-						api.getAzureProjectsForResource(resource.name, {
-							accessToken: convertTokentoPAT(accessToken),
-							isPAT: true,
-						}),
-					),
-				)
-			)
-				.map(r => getSettledValue(r)?.values)
-				.flat()
-				.filter(p => p != null);
+			const { tokenWithInfo, options } = this.getApiOptions(session);
+			const azureProjects = await flatSettled(
+				resourcesWithoutProjects.map(
+					async resource =>
+						(await api.getAzureProjectsForResource(tokenWithInfo, resource.name, options)).values,
+				),
+			);
 
 			for (const resource of resourcesWithoutProjects) {
 				const projects = azureProjects?.filter(p => p.namespace === resource.name);
@@ -159,21 +165,18 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 	}
 
 	private async getRepoDescriptorsForProjects(
-		session: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		projects: AzureProjectDescriptor[],
 	): Promise<Map<string, AzureRemoteRepositoryDescriptor[] | undefined>> {
 		const descriptors = new Map<string, AzureRemoteRepositoryDescriptor[] | undefined>();
 		if (projects.length === 0) return descriptors;
 
 		const api = await this.getProvidersApi();
-		const { accessToken } = session;
+		const { tokenWithInfo, options } = this.getApiOptions(session);
 		await Promise.all(
 			projects.map(async project => {
 				const repos = (
-					await api.getReposForAzureProject(project.resourceName, project.name, {
-						accessToken: convertTokentoPAT(accessToken),
-						isPAT: true,
-					})
+					await api.getReposForAzureProject(tokenWithInfo, project.resourceName, project.name, options)
 				)?.values;
 				if (repos != null && repos.length > 0) {
 					descriptors.set(
@@ -198,7 +201,7 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 	}
 
 	protected override async mergeProviderPullRequest(
-		{ accessToken }: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		pr: PullRequest,
 		options?: {
 			mergeMethod?: PullRequestMergeMethod;
@@ -207,11 +210,12 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 		const api = await this.getProvidersApi();
 		if (pr.refs == null || pr.project == null) return false;
 
+		const { tokenWithInfo, options: apiOptions } = this.getApiOptions(session);
+
 		try {
-			const merged = await api.mergePullRequest(this.id, pr, {
+			const merged = await api.mergePullRequest(tokenWithInfo, pr, {
 				...options,
-				accessToken: convertTokentoPAT(accessToken),
-				isPAT: true,
+				...apiOptions,
 			});
 			return merged;
 		} catch (ex) {
@@ -220,14 +224,14 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 		}
 	}
 
-	private async showMergeErrorMessage(ex: Error) {
+	protected async showMergeErrorMessage(ex: Error): Promise<void> {
 		await window.showErrorMessage(
 			`${ex.message}. Check branch policies, and ensure you have the necessary permissions to merge the pull request.`,
 		);
 	}
 
 	protected override async getProviderAccountForCommit(
-		{ accessToken }: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		repo: AzureRepositoryDescriptor,
 		rev: string,
 		options?: {
@@ -236,7 +240,7 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 	): Promise<UnidentifiedAuthor | undefined> {
 		return (await this.container.azure)?.getAccountForCommit(
 			this,
-			accessToken,
+			toTokenWithInfo(this.id, session),
 			repo.owner,
 			repo.name,
 			rev,
@@ -263,18 +267,27 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 		return Promise.resolve(undefined);
 	}
 
-	protected override async getProviderIssueOrPullRequest(
-		{ accessToken }: AuthenticationSession,
+	protected override async getProviderLinkedIssueOrPullRequest(
+		session: ProviderAuthenticationSession,
 		repo: AzureRepositoryDescriptor,
-		id: string,
+		{ id }: { id: string; key: string },
+		type: undefined | IssueOrPullRequestType,
 	): Promise<IssueOrPullRequest | undefined> {
-		return (await this.container.azure)?.getIssueOrPullRequest(this, accessToken, repo.owner, repo.name, id, {
-			baseUrl: this.apiBaseUrl,
-		});
+		return (await this.container.azure)?.getIssueOrPullRequest(
+			this,
+			toTokenWithInfo(this.id, session),
+			repo.owner,
+			repo.name,
+			id,
+			{
+				baseUrl: this.apiBaseUrl,
+				type: type,
+			},
+		);
 	}
 
 	protected override async getProviderIssue(
-		session: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		project: AzureProjectInputDescriptor,
 		id: string,
 	): Promise<Issue | undefined> {
@@ -290,13 +303,13 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 		const matchingProject = projects.find(p => p.resourceName === project.owner && p.name === project.name);
 		if (matchingProject == null) return undefined;
 
-		return (await this.container.azure)?.getIssue(this, session.accessToken, matchingProject, id, {
+		return (await this.container.azure)?.getIssue(this, toTokenWithInfo(this.id, session), matchingProject, id, {
 			baseUrl: this.apiBaseUrl,
 		});
 	}
 
 	protected override async getProviderPullRequestForBranch(
-		{ accessToken }: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		repo: AzureRepositoryDescriptor,
 		branch: string,
 		_options?: {
@@ -304,19 +317,26 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 			include?: PullRequestState[];
 		},
 	): Promise<PullRequest | undefined> {
-		return (await this.container.azure)?.getPullRequestForBranch(this, accessToken, repo.owner, repo.name, branch, {
-			baseUrl: this.apiBaseUrl,
-		});
+		return (await this.container.azure)?.getPullRequestForBranch(
+			this,
+			toTokenWithInfo(this.id, session),
+			repo.owner,
+			repo.name,
+			branch,
+			{
+				baseUrl: this.apiBaseUrl,
+			},
+		);
 	}
 
 	protected override async getProviderPullRequestForCommit(
-		{ accessToken }: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		repo: AzureRepositoryDescriptor,
 		rev: string,
 	): Promise<PullRequest | undefined> {
 		return (await this.container.azure)?.getPullRequestForCommit(
 			this,
-			accessToken,
+			toTokenWithInfo(this.id, session),
 			repo.owner,
 			repo.name,
 			rev,
@@ -332,10 +352,8 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 		const api = await this.getProvidersApi();
 		if (this._session == null) return undefined;
 
-		return api.getRepo(this.id, repo.owner, repo.name, repo.project, {
-			accessToken: convertTokentoPAT(this._session.accessToken),
-			isPAT: true,
-		});
+		const { tokenWithInfo, options } = this.getApiOptions(this._session);
+		return api.getRepo(tokenWithInfo, repo.owner, repo.name, repo.project, options);
 	}
 
 	protected override async getProviderRepositoryMetadata(
@@ -347,7 +365,7 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 	}
 
 	protected override async searchProviderMyPullRequests(
-		session: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		repos?: AzureRepositoryDescriptor[],
 	): Promise<PullRequest[] | undefined> {
 		const api = await this.getProvidersApi();
@@ -365,24 +383,23 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 		const projects = await this.getProviderProjectsForResources(session, orgs);
 		if (projects == null || projects.length === 0) return undefined;
 
-		const repoDescriptors = Array.from(
-			((await this.getRepoDescriptorsForProjects(session, projects)) ?? new Map()).values(),
-		)
+		const repoDescriptors = [
+			...((await this.getRepoDescriptorsForProjects(session, projects)) ?? new Map()).values(),
+		]
 			.filter(r => r != null)
 			.flat();
 
+		const { tokenWithInfo, options } = this.getApiOptions(session);
 		const projectInputs = projects.map(p => ({ namespace: p.resourceName, project: p.name }));
 		const assignedPrs = (
-			await api.getPullRequestsForAzureProjects(projectInputs, {
-				accessToken: convertTokentoPAT(session.accessToken),
-				isPAT: true,
+			await api.getPullRequestsForAzureProjects(tokenWithInfo, projectInputs, {
+				...options,
 				assigneeLogins: [user.username],
 			})
 		)?.map(pr => this.fromAzureProviderPullRequest(pr, repoDescriptors, projects));
 		const authoredPrs = (
-			await api.getPullRequestsForAzureProjects(projectInputs, {
-				accessToken: convertTokentoPAT(session.accessToken),
-				isPAT: true,
+			await api.getPullRequestsForAzureProjects(tokenWithInfo, projectInputs, {
+				...options,
 				authorLogin: user.username,
 			})
 		)?.map(pr => this.fromAzureProviderPullRequest(pr, repoDescriptors, projects));
@@ -398,11 +415,11 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 			}
 		}
 
-		return Array.from(prsById.values());
+		return [...prsById.values()];
 	}
 
 	protected override async searchProviderMyIssues(
-		session: AuthenticationSession,
+		session: ProviderAuthenticationSession,
 		_repos?: AzureRepositoryDescriptor[],
 	): Promise<IssueShape[] | undefined> {
 		const api = await this.getProvidersApi();
@@ -416,33 +433,29 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 		const projects = await this.getProviderProjectsForResources(session, orgs);
 		if (projects == null || projects.length === 0) return undefined;
 
-		const assignedIssues = (
-			await Promise.all(
-				projects.map(async p => {
-					const issuesResponse = (
-						await api.getIssuesForAzureProject(p.resourceName, p.name, {
-							accessToken: convertTokentoPAT(session.accessToken),
-							isPAT: true,
-							assigneeLogins: [user.username!],
-						})
-					).values;
-					return issuesResponse.map(i => fromProviderIssue(i, this, { project: p }));
-				}),
-			)
-		).flat();
-		const authoredIssues = (
-			await Promise.all(
-				projects.map(async p => {
-					const issuesResponse = (
-						await api.getIssuesForAzureProject(p.resourceName, p.name, {
-							accessToken: session.accessToken,
-							authorLogin: user.username!,
-						})
-					).values;
-					return issuesResponse.map(i => fromProviderIssue(i, this, { project: p }));
-				}),
-			)
-		).flat();
+		const { tokenWithInfo, options } = this.getApiOptions(session);
+		const assignedIssues = await flatSettled(
+			projects.map(async p => {
+				const issuesResponse = (
+					await api.getIssuesForAzureProject(tokenWithInfo, p.resourceName, p.name, {
+						...options,
+						assigneeLogins: [user.username!],
+					})
+				).values;
+				return issuesResponse.map(i => fromProviderIssue(i, this as any, { project: p }));
+			}),
+		);
+		const authoredIssues = await flatSettled(
+			projects.map(async p => {
+				const issuesResponse = (
+					await api.getIssuesForAzureProject(tokenWithInfo, p.resourceName, p.name, {
+						...options,
+						authorLogin: user.username!,
+					})
+				).values;
+				return issuesResponse.map(i => fromProviderIssue(i, this as any, { project: p }));
+			}),
+		);
 		// TODO: Add mentioned issues
 		const issuesById = new Map<string, IssueShape>();
 
@@ -457,7 +470,7 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 			}
 		}
 
-		return Array.from(issuesById.values());
+		return [...issuesById.values()];
 	}
 
 	protected override async providerOnConnect(): Promise<void> {
@@ -531,7 +544,7 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 		this._accounts = undefined;
 	}
 
-	private fromAzureProviderPullRequest(
+	protected fromAzureProviderPullRequest(
 		azurePullRequest: ProviderPullRequest,
 		repoDescriptors: AzureRemoteRepositoryDescriptor[],
 		projectDescriptors: AzureProjectDescriptor[],
@@ -573,11 +586,86 @@ export class AzureDevOpsIntegration extends GitHostIntegration<
 	}
 }
 
+const cloudMetadata = providersMetadata[GitCloudHostIntegrationId.AzureDevOps];
+const cloudAuthProvider = Object.freeze({ id: cloudMetadata.id, scopes: cloudMetadata.scopes });
+
+export class AzureDevOpsIntegration extends AzureDevOpsIntegrationBase<GitCloudHostIntegrationId.AzureDevOps> {
+	readonly authProvider: IntegrationAuthenticationProviderDescriptor = cloudAuthProvider;
+	readonly id = GitCloudHostIntegrationId.AzureDevOps;
+	protected readonly key = this.id;
+	readonly name: string = 'Azure DevOps';
+	get domain(): string {
+		return cloudMetadata.domain;
+	}
+	protected override get apiBaseUrl(): string {
+		return 'https://dev.azure.com';
+	}
+}
+
+const serverMetadata = providersMetadata[GitSelfManagedHostIntegrationId.AzureDevOpsServer];
+const serverAuthProvider = Object.freeze({ id: serverMetadata.id, scopes: serverMetadata.scopes });
+
+export class AzureDevOpsServerIntegration extends AzureDevOpsIntegrationBase<GitSelfManagedHostIntegrationId.AzureDevOpsServer> {
+	readonly authProvider: IntegrationAuthenticationProviderDescriptor = serverAuthProvider;
+	readonly id = GitSelfManagedHostIntegrationId.AzureDevOpsServer;
+	protected readonly key: IntegrationKey<GitSelfManagedHostIntegrationId.AzureDevOpsServer>;
+	readonly name: string = 'Azure DevOps Server';
+
+	constructor(
+		container: Container,
+		authenticationService: IntegrationAuthenticationService,
+		getProvidersApi: () => Promise<ProvidersApi>,
+		didChangeConnection: EventEmitter<IntegrationConnectionChangeEvent>,
+		readonly domain: string,
+	) {
+		super(container, authenticationService, getProvidersApi, didChangeConnection);
+		this.key = `${this.id}:${this.domain}`;
+	}
+
+	protected override get apiBaseUrl(): string {
+		const protocol = this._session?.protocol ?? 'https:';
+		return `${protocol}//${this.domain}`;
+	}
+
+	protected override getApiOptions(
+		session: ProviderAuthenticationSession,
+		doNotConvertToPat: boolean = false,
+	): {
+		tokenWithInfo: TokenWithInfo<GitSelfManagedHostIntegrationId.AzureDevOpsServer>;
+		options: { isPAT: boolean; baseUrl?: string };
+	} {
+		const { options, ...rest } = super.getApiOptions(session, doNotConvertToPat);
+		return {
+			...rest,
+			options: { ...options, baseUrl: this.apiBaseUrl },
+		};
+	}
+
+	protected override async _requestForCurrentUser(
+		session: ProviderAuthenticationSession,
+	): Promise<Account | undefined> {
+		const azure = await this.container.azure;
+		const user = azure
+			? await azure.getCurrentUserOnServer(this, toTokenWithInfo(this.id, session), this.apiBaseUrl)
+			: undefined;
+		return user
+			? {
+					provider: this,
+					id: user.id,
+					name: user.name ?? undefined,
+					email: user.email ?? undefined,
+					avatarUrl: user.avatarUrl ?? undefined,
+					username: user.username ?? undefined,
+				}
+			: undefined;
+	}
+}
+
 const azureCloudDomainRegex = /^dev\.azure\.com$|\bvisualstudio\.com$/i;
 export function isAzureCloudDomain(domain: string | undefined): boolean {
 	return domain != null && azureCloudDomainRegex.test(domain);
 }
 
-function convertTokentoPAT(accessToken: string): string {
+export function convertTokentoPAT(accessToken: string): string {
 	return base64(`PAT:${accessToken}`);
 }

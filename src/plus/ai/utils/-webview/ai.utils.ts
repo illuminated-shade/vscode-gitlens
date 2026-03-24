@@ -1,19 +1,28 @@
-import type { Disposable, QuickInputButton } from 'vscode';
+import type { CancellationToken, Disposable, QuickInputButton } from 'vscode';
 import { env, ThemeIcon, Uri, window } from 'vscode';
-import type { AIProviders } from '../../../../constants.ai';
-import type { Container } from '../../../../container';
-import { createDirectiveQuickPickItem, Directive } from '../../../../quickpicks/items/directive';
-import { configuration } from '../../../../system/-webview/configuration';
-import { getContext } from '../../../../system/-webview/context';
-import { openSettingsEditor } from '../../../../system/-webview/vscode/editors';
-import { formatNumeric } from '../../../../system/date';
-import { getPossessiveForm, pluralize } from '../../../../system/string';
-import type { OrgAIConfig, OrgAIProvider } from '../../../gk/models/organization';
-import { ensureAccountQuickPick } from '../../../gk/utils/-webview/acount.utils';
-import type { AIActionType, AIModel } from '../../models/model';
+import type { AIProviders } from '../../../../constants.ai.js';
+import { Schemes } from '../../../../constants.js';
+import type { Source } from '../../../../constants.telemetry.js';
+import type { Container } from '../../../../container.js';
+import type { MarkdownContentMetadata } from '../../../../documents/markdown.js';
+import { CancellationError } from '../../../../errors.js';
+import type { GitRepositoryService } from '../../../../git/gitRepositoryService.js';
+import { decodeGitLensRevisionUriAuthority } from '../../../../git/gitUri.authority.js';
+import { createDirectiveQuickPickItem, Directive } from '../../../../quickpicks/items/directive.js';
+import { configuration } from '../../../../system/-webview/configuration.js';
+import { getContext } from '../../../../system/-webview/context.js';
+import { openSettingsEditor } from '../../../../system/-webview/vscode/editors.js';
+import { formatNumeric } from '../../../../system/date.js';
+import { Logger } from '../../../../system/logger.js';
+import { getSettledValue } from '../../../../system/promise.js';
+import { getPossessiveForm, pluralize } from '../../../../system/string.js';
+import type { OrgAIConfig, OrgAIProvider } from '../../../gk/models/organization.js';
+import { ensureAccountQuickPick } from '../../../gk/utils/-webview/acount.utils.js';
+import type { AIResponse, AIResultContext } from '../../aiProviderService.js';
+import type { AIActionType, AIModel } from '../../models/model.js';
 
-export function ensureAccount(container: Container, silent: boolean): Promise<boolean> {
-	return ensureAccountQuickPick(
+export async function ensureAccount(container: Container, silent: boolean): Promise<boolean> {
+	const result = await ensureAccountQuickPick(
 		container,
 		createDirectiveQuickPickItem(Directive.Noop, undefined, {
 			label: 'Use AI-powered GitLens features like Generate Commit Message, Explain Commit, and more',
@@ -22,6 +31,12 @@ export function ensureAccount(container: Container, silent: boolean): Promise<bo
 		{ source: 'ai' },
 		silent,
 	);
+
+	if (!result && !silent) {
+		throw new CancellationError();
+	}
+
+	return result;
 }
 
 export function getActionName(action: AIActionType): string {
@@ -40,14 +55,14 @@ export function getActionName(action: AIActionType): string {
 			return 'Create Code Suggestion Details';
 		case 'generate-create-pullRequest':
 			return 'Create Pull Request Details (Preview)';
-		case 'generate-rebase':
-			return 'Generate Rebase (Preview)';
+		case 'generate-commits':
+			return 'Generate Commits (Preview)';
 		case 'generate-searchQuery':
 			return 'Generate Search Query (Preview)';
 	}
 }
 
-export const estimatedCharactersPerToken = 3.1;
+export const estimatedCharactersPerToken = 2.8;
 
 export async function getOrPromptApiKey(
 	container: Container,
@@ -132,10 +147,49 @@ export async function getOrPromptApiKey(
 	return apiKey;
 }
 
-export function getValidatedTemperature(modelTemperature?: number | null): number | undefined {
+export function getValidatedTemperature(model: AIModel, modelTemperature?: number | null): number | undefined {
 	if (modelTemperature === null) return undefined;
-	if (modelTemperature != null) return modelTemperature;
-	return Math.max(0, Math.min(configuration.get('ai.modelOptions.temperature'), 2));
+	// GPT5 doesn't support anything but the default temperature
+	if (model.id.startsWith('gpt-5')) return undefined;
+
+	modelTemperature ??= Math.max(0, Math.min(configuration.get('ai.modelOptions.temperature'), 2));
+	return modelTemperature;
+}
+
+/**
+ * Calculates the reduced max input tokens for retry attempts when context length is exceeded.
+ *
+ * If `estimatedTokens` is provided, calculates based on the actual overage ratio.
+ * Otherwise, uses a hybrid strategy: conservative fixed reduction, then escalating percentages.
+ *
+ * @param maxInputTokens - Current max input tokens limit
+ * @param retryCount - Current retry attempt (1-based, use value after incrementing)
+ * @param estimatedTokens - Optional: estimated tokens in the prompt (if known)
+ * @returns New max input tokens value
+ */
+export function getReducedMaxInputTokens(maxInputTokens: number, retryCount: number, estimatedTokens?: number): number {
+	// If we know the estimated tokens, calculate reduction based on overage
+	if (estimatedTokens != null && estimatedTokens > maxInputTokens) {
+		const overageRatio = estimatedTokens / maxInputTokens;
+		// Target below the limit with some buffer (5-15% below based on retry)
+		const bufferPercent = 0.05 + retryCount * 0.05;
+		const targetRatio = 1 / overageRatio - bufferPercent;
+		return Math.floor(maxInputTokens * Math.max(0.5, targetRatio));
+	}
+
+	// Fallback: progressive reduction without knowing exact overage
+	switch (retryCount) {
+		case 1:
+			// Conservative fixed reduction for small overages
+			return maxInputTokens - 1000;
+		case 2:
+			// Moderate percentage-based reduction
+			return Math.floor(maxInputTokens * 0.9);
+		case 3:
+		default:
+			// Aggressive percentage-based reduction
+			return Math.floor(maxInputTokens * 0.75);
+	}
 }
 
 export async function showLargePromptWarning(estimatedTokens: number, threshold: number): Promise<boolean> {
@@ -179,15 +233,15 @@ export function getOrgAIConfig(): OrgAIConfig {
 	};
 }
 
-export function getOrgAIProviderOfType(type: AIProviders, orgAiConfig?: OrgAIConfig): OrgAIProvider {
-	orgAiConfig ??= getOrgAIConfig();
-	if (!orgAiConfig.aiEnabled) return { type: type, enabled: false };
-	if (!orgAiConfig.enforceAiProviders) return { type: type, enabled: true };
-	return orgAiConfig.aiProviders[type] ?? { type: type, enabled: false };
+export function getOrgAIProviderOfType(type: AIProviders, orgAIConfig?: OrgAIConfig): OrgAIProvider {
+	orgAIConfig ??= getOrgAIConfig();
+	if (!orgAIConfig.aiEnabled) return { type: type, enabled: false };
+	if (!orgAIConfig.enforceAiProviders) return { type: type, enabled: true };
+	return orgAIConfig.aiProviders[type] ?? { type: type, enabled: false };
 }
 
-export function isProviderEnabledByOrg(type: AIProviders, orgAiConfig?: OrgAIConfig): boolean {
-	return getOrgAIProviderOfType(type, orgAiConfig).enabled;
+export function isProviderEnabledByOrg(type: AIProviders, orgAIConfig?: OrgAIConfig): boolean {
+	return getOrgAIProviderOfType(type, orgAIConfig).enabled;
 }
 
 /**
@@ -200,10 +254,14 @@ export function ensureOrgConfiguredUrl(type: AIProviders, userUrl: null | undefi
 	return provider.url || userUrl || undefined;
 }
 
-export async function ensureAccess(options?: { showPicker?: boolean }): Promise<boolean> {
+export async function ensureAccess(
+	container: Container,
+	options?: { showPicker?: boolean },
+	source?: Source,
+): Promise<boolean> {
 	const showPicker = options?.showPicker ?? false;
 
-	if (!getContext('gitlens:gk:organization:ai:enabled', true)) {
+	if (!container.ai.allowed) {
 		if (showPicker) {
 			await window.showQuickPick([{ label: 'OK' }], {
 				title: 'AI is Disabled',
@@ -217,7 +275,7 @@ export async function ensureAccess(options?: { showPicker?: boolean }): Promise<
 		return false;
 	}
 
-	if (!configuration.get('ai.enabled')) {
+	if (!container.ai.enabled) {
 		let reenable = false;
 		if (showPicker) {
 			const enable = { label: 'Re-enable AI Features' };
@@ -242,7 +300,7 @@ export async function ensureAccess(options?: { showPicker?: boolean }): Promise<
 		}
 
 		if (reenable) {
-			await configuration.updateEffective('ai.enabled', true);
+			await container.ai.enable(source);
 			return true;
 		}
 
@@ -250,4 +308,113 @@ export async function ensureAccess(options?: { showPicker?: boolean }): Promise<
 	}
 
 	return true;
+}
+
+export function getAIResultContext(result: AIResponse<any>): AIResultContext {
+	return {
+		id: result.id,
+		type: result.type,
+		feature: result.feature,
+		model: result.model,
+		usage:
+			result.usage != null
+				? {
+						promptTokens: result.usage.promptTokens,
+						completionTokens: result.usage.completionTokens,
+						totalTokens: result.usage.totalTokens,
+						limits:
+							result.usage.limits != null
+								? {
+										used: result.usage.limits.used,
+										limit: result.usage.limits.limit,
+										resetsOn: result.usage.limits.resetsOn.toISOString(),
+									}
+								: undefined,
+					}
+				: undefined,
+	};
+}
+
+export function extractAIResultContext(container: Container, uri: Uri | undefined): AIResultContext | undefined {
+	if (uri?.scheme === Schemes.GitLensAIMarkdown) {
+		const { authority } = uri;
+		if (!authority) return undefined;
+
+		try {
+			const context: AIResultContext | undefined = container.aiFeedback.getMarkdownDocument(uri.toString());
+			if (context) return context;
+
+			const metadata = decodeGitLensRevisionUriAuthority<MarkdownContentMetadata>(authority);
+			return metadata.context;
+		} catch (ex) {
+			Logger.error(ex, 'extractResultContext');
+			return undefined;
+		}
+	}
+
+	// Check for untitled documents with stored changelog feedback context
+	if (uri?.scheme === 'untitled') {
+		try {
+			return container.aiFeedback.getChangelogDocument(uri.toString());
+		} catch {
+			return undefined;
+		}
+	}
+
+	return undefined;
+}
+
+export async function prepareCompareDataForAIRequest(
+	svc: GitRepositoryService,
+	headRef: string,
+	baseRef: string,
+	options?: {
+		cancellation?: CancellationToken;
+		reportNoDiffService?: () => void;
+		reportNoCommitsService?: () => void;
+		reportNoChanges?: () => void;
+	},
+): Promise<{ diff: string; logMessages: string } | undefined> {
+	const { cancellation, reportNoDiffService, reportNoCommitsService, reportNoChanges } = options ?? {};
+	const getDiff = svc.diff?.getDiff;
+	if (getDiff == null) {
+		if (reportNoDiffService) {
+			reportNoDiffService();
+			return;
+		}
+	}
+
+	const getLog = svc.commits?.getLog;
+	if (getLog === undefined) {
+		if (reportNoCommitsService) {
+			reportNoCommitsService();
+			return;
+		}
+	}
+
+	const [diffResult, logResult] = await Promise.allSettled([
+		getDiff?.(headRef, baseRef, { notation: '...' }),
+		getLog(`${baseRef}..${headRef}`),
+	]);
+	const diff = getSettledValue(diffResult);
+	const log = getSettledValue(logResult);
+
+	if (!diff?.contents || !log?.commits?.size) {
+		reportNoChanges?.();
+		return undefined;
+	}
+
+	if (cancellation?.isCancellationRequested) throw new CancellationError();
+
+	const commitMessages: string[] = [];
+	for (const commit of [...log.commits.values()].sort((a, b) => a.date.getTime() - b.date.getTime())) {
+		const message = commit.message ?? commit.summary;
+		if (message) {
+			commitMessages.push(
+				`<commit-message ${commit.date.toISOString()}>\n${commit.message ?? commit.summary}\n<end-of-commit-message>`,
+			);
+		}
+	}
+
+	return { diff: diff.contents, logMessages: commitMessages.join('\n\n') };
 }

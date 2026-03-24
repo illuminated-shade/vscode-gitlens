@@ -1,24 +1,23 @@
 import type { CancellationToken } from 'vscode';
-import type { Container } from '../../../../../container';
-import type { GitCache } from '../../../../../git/cache';
+import type { Container } from '../../../../../container.js';
+import type { GitCache } from '../../../../../git/cache.js';
 import type {
 	BranchContributionsOverview,
 	GitBranchesSubProvider,
 	PagedResult,
 	PagingOptions,
-} from '../../../../../git/gitProvider';
-import { GitBranch } from '../../../../../git/models/branch';
-import type { BranchSortOptions } from '../../../../../git/utils/-webview/sorting';
-import { sortBranches, sortContributors } from '../../../../../git/utils/-webview/sorting';
-import { createRevisionRange } from '../../../../../git/utils/revision.utils';
-import { configuration } from '../../../../../system/-webview/configuration';
-import { log } from '../../../../../system/decorators/log';
-import { Logger } from '../../../../../system/logger';
-import { getLogScope } from '../../../../../system/logger.scope';
-import { HeadType } from '../../../../remotehub';
-import type { GitHubGitProviderInternal } from '../githubGitProvider';
-import { stripOrigin } from '../githubGitProvider';
-import type { GitHubBranch } from '../models';
+} from '../../../../../git/gitProvider.js';
+import { GitBranch } from '../../../../../git/models/branch.js';
+import type { BranchSortOptions } from '../../../../../git/utils/-webview/sorting.js';
+import { sortBranches, sortContributors } from '../../../../../git/utils/-webview/sorting.js';
+import { createRevisionRange, stripOrigin } from '../../../../../git/utils/revision.utils.js';
+import { configuration } from '../../../../../system/-webview/configuration.js';
+import { debug } from '../../../../../system/decorators/log.js';
+import { getScopedLogger } from '../../../../../system/logger.scope.js';
+import { HeadType } from '../../../../remotehub.js';
+import { toTokenWithInfo } from '../../../authentication/models.js';
+import type { GitHubGitProviderInternal } from '../githubGitProvider.js';
+import type { GitHubBranch } from '../models.js';
 
 const emptyPagedResult: PagedResult<any> = Object.freeze({ values: [] });
 
@@ -29,8 +28,10 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 		private readonly provider: GitHubGitProviderInternal,
 	) {}
 
-	@log()
+	@debug()
 	async getBranch(repoPath: string, name?: string, cancellation?: CancellationToken): Promise<GitBranch | undefined> {
+		const scope = getScopedLogger();
+
 		if (name != null) {
 			const {
 				values: [branch],
@@ -38,7 +39,7 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 			return branch;
 		}
 
-		let branchPromise = this.cache.branch?.get(repoPath);
+		let branchPromise = this.cache.branch.get(repoPath);
 		if (branchPromise == null) {
 			async function load(this: BranchesGitSubProvider): Promise<GitBranch | undefined> {
 				const {
@@ -59,6 +60,8 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 								`refs/heads/${revision.name}`,
 								true,
 								undefined,
+								undefined,
+								undefined,
 								revision.revision,
 								undefined,
 								false,
@@ -69,19 +72,19 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 					return undefined;
 				} catch (ex) {
 					debugger;
-					Logger.error(ex, getLogScope());
+					scope?.error(ex);
 					return undefined;
 				}
 			}
 
 			branchPromise = load.call(this);
-			this.cache.branch?.set(repoPath, branchPromise);
+			this.cache.branch.set(repoPath, branchPromise);
 		}
 
 		return branchPromise;
 	}
 
-	@log({ args: { 1: false } })
+	@debug({ args: repoPath => ({ repoPath: repoPath }) })
 	async getBranches(
 		repoPath: string | undefined,
 		options?: {
@@ -93,9 +96,9 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 	): Promise<PagedResult<GitBranch>> {
 		if (repoPath == null) return emptyPagedResult;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
-		let branchesPromise = options?.paging?.cursor ? undefined : this.cache.branches?.get(repoPath);
+		let branchesPromise = options?.paging?.cursor ? undefined : this.cache.branches.get(repoPath);
 		if (branchesPromise == null) {
 			async function load(this: BranchesGitSubProvider): Promise<PagedResult<GitBranch>> {
 				try {
@@ -118,6 +121,8 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 								`refs/heads/${branch.name}`,
 								current,
 								date,
+								undefined,
+								undefined,
 								ref,
 								{
 									name: `origin/${branch.name}`,
@@ -132,6 +137,8 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 								`refs/remotes/origin/${branch.name}`,
 								false,
 								date,
+								undefined,
+								undefined,
 								ref,
 								undefined,
 								false,
@@ -158,7 +165,7 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 
 					while (true) {
 						const result = await github.getBranches(
-							session.accessToken,
+							toTokenWithInfo(this.provider.authenticationProviderId, session),
 							metadata.repo.owner,
 							metadata.repo.name,
 							{ cursor: cursor },
@@ -173,17 +180,17 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 						cursor = result.paging.cursor;
 					}
 				} catch (ex) {
-					Logger.error(ex, scope);
+					scope?.error(ex);
 					debugger;
 
-					this.cache.branches?.delete(repoPath!);
+					this.cache.branches.delete(repoPath!);
 					return emptyPagedResult;
 				}
 			}
 
 			branchesPromise = load.call(this);
 			if (options?.paging?.cursor == null) {
-				this.cache.branches?.set(repoPath, branchesPromise);
+				this.cache.branches.set(repoPath, branchesPromise);
 			}
 		}
 
@@ -202,13 +209,13 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 		return result;
 	}
 
-	@log()
+	@debug()
 	async getBranchContributionsOverview(
 		repoPath: string,
 		ref: string,
 		_cancellation?: CancellationToken,
 	): Promise<BranchContributionsOverview | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const mergeTarget = await this.getDefaultBranchName(repoPath);
@@ -271,12 +278,12 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 				contributors: result.contributors,
 			};
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return undefined;
 		}
 	}
 
-	@log()
+	@debug()
 	async getBranchesWithCommits(
 		repoPath: string,
 		shas: string[],
@@ -288,7 +295,7 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 	): Promise<string[]> {
 		if (repoPath == null || options?.commitDate == null) return [];
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const { metadata, github, session } = await this.provider.ensureRepositoryContext(repoPath);
@@ -297,7 +304,7 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 
 			if (branch) {
 				branches = await github.getBranchWithCommit(
-					session.accessToken,
+					toTokenWithInfo(this.provider.authenticationProviderId, session),
 					metadata.repo.owner,
 					metadata.repo.name,
 					branch,
@@ -307,7 +314,7 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 				);
 			} else {
 				branches = await github.getBranchesWithCommits(
-					session.accessToken,
+					toTokenWithInfo(this.provider.authenticationProviderId, session),
 					metadata.repo.owner,
 					metadata.repo.name,
 					shas.map(stripOrigin),
@@ -318,13 +325,13 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 
 			return branches;
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 			return [];
 		}
 	}
 
-	@log()
+	@debug()
 	async getDefaultBranchName(
 		repoPath: string | undefined,
 		_remote?: string,
@@ -332,13 +339,17 @@ export class BranchesGitSubProvider implements GitBranchesSubProvider {
 	): Promise<string | undefined> {
 		if (repoPath == null) return undefined;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const { metadata, github, session } = await this.provider.ensureRepositoryContext(repoPath);
-			return await github.getDefaultBranchName(session.accessToken, metadata.repo.owner, metadata.repo.name);
+			return await github.getDefaultBranchName(
+				toTokenWithInfo(this.provider.authenticationProviderId, session),
+				metadata.repo.owner,
+				metadata.repo.name,
+			);
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 			return undefined;
 		}

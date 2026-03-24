@@ -1,5 +1,5 @@
-import type { GitRevisionRange, GitRevisionRangeNotation } from '../models/revision';
-import { deletedOrMissing, uncommitted, uncommittedStaged } from '../models/revision';
+import type { GitRevisionRange, GitRevisionRangeNotation } from '../models/revision.js';
+import { deletedOrMissing, uncommitted, uncommittedStaged } from '../models/revision.js';
 
 const rangeRegex = /^([\w\-/]+(?:\.[\w\-/]+)*)?(\.\.\.?)([\w\-/]+(?:\.[\w\-/]+)*)?$/;
 const qualifiedRangeRegex = /^([\w\-/]+(?:\.[\w\-/]+)*)(\.\.\.?)([\w\-/]+(?:\.[\w\-/]+)*)$/;
@@ -136,4 +136,8 @@ export function isRevisionRange(
 		default:
 			return rangeRegex.test(rev);
 	}
+} //** Strips `origin/` from a reference or range, because we "fake" origin as the default remote */
+
+export function stripOrigin<T extends string | GitRevisionRange | undefined>(ref: T): T {
+	return ref?.replace(/(?:^|(?<=..))origin\//, '') as T;
 }

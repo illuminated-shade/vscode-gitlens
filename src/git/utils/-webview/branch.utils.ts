@@ -1,12 +1,12 @@
 import type { CancellationToken } from 'vscode';
-import type { Container } from '../../../container';
-import { CancellationError } from '../../../errors';
-import type { MaybePausedResult } from '../../../system/promise';
-import { getSettledValue, pauseOnCancelOrTimeout } from '../../../system/promise';
-import type { GitRepositoryService } from '../../gitRepositoryService';
-import type { BranchTargetInfo, GitBranch } from '../../models/branch';
-import type { PullRequest } from '../../models/pullRequest';
-import { createRevisionRange } from '../revision.utils';
+import type { Container } from '../../../container.js';
+import { CancellationError } from '../../../errors.js';
+import type { MaybePausedResult } from '../../../system/promise.js';
+import { getSettledValue, pauseOnCancelOrTimeout } from '../../../system/promise.js';
+import type { GitRepositoryService } from '../../gitRepositoryService.js';
+import type { BranchTargetInfo, GitBranch } from '../../models/branch.js';
+import type { PullRequest } from '../../models/pullRequest.js';
+import { createRevisionRange } from '../revision.utils.js';
 
 const maxDefaultBranchWeight = 100;
 const weightedDefaultBranches = new Map<string, number>([
@@ -187,4 +187,16 @@ export async function getDefaultBranchNameFromIntegration(
 	const integration = await remote.getIntegration();
 	const defaultBranch = await integration?.getDefaultBranch?.(remote.provider.repoDesc, options);
 	return defaultBranch && `${remote.name}/${defaultBranch?.name}`;
+}
+
+export function isBranchStarred(container: Container, branchId: string): boolean {
+	const starred = container.storage.getWorkspace('starred:branches');
+	return starred?.[branchId] === true;
+}
+
+export function getStarredBranchIds(container: Container): Set<string> {
+	const starred = container.storage.getWorkspace('starred:branches');
+	if (starred == null) return new Set();
+
+	return new Set(Object.keys(starred).filter(branchId => starred[branchId] === true));
 }

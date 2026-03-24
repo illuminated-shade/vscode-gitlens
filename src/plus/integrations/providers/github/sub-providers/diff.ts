@@ -1,30 +1,34 @@
 import type { Uri } from 'vscode';
-import type { Container } from '../../../../../container';
-import type { GitCache } from '../../../../../git/cache';
+import type { Container } from '../../../../../container.js';
+import type { GitCache } from '../../../../../git/cache.js';
 import type {
 	DiffRange,
 	GitDiffSubProvider,
 	NextComparisonUrisResult,
 	PreviousComparisonUrisResult,
 	PreviousRangeComparisonUrisResult,
-} from '../../../../../git/gitProvider';
-import { GitUri } from '../../../../../git/gitUri';
-import type { GitDiffFilter, GitDiffShortStat } from '../../../../../git/models/diff';
-import type { GitFile } from '../../../../../git/models/file';
-import { GitFileChange } from '../../../../../git/models/fileChange';
-import { GitFileIndexStatus } from '../../../../../git/models/fileStatus';
-import type { GitRevisionRange } from '../../../../../git/models/revision';
-import { deletedOrMissing, uncommitted } from '../../../../../git/models/revision';
-import { getChangedFilesCount } from '../../../../../git/utils/commit.utils';
-import { createRevisionRange, getRevisionRangeParts, isRevisionRange } from '../../../../../git/utils/revision.utils';
-import { diffRangeToEditorLine } from '../../../../../system/-webview/vscode/editors';
-import { log } from '../../../../../system/decorators/log';
-import { union } from '../../../../../system/iterable';
-import { Logger } from '../../../../../system/logger';
-import { getLogScope } from '../../../../../system/logger.scope';
-import type { GitHubGitProviderInternal } from '../githubGitProvider';
-import { stripOrigin } from '../githubGitProvider';
-import { fromCommitFileStatus } from '../models';
+} from '../../../../../git/gitProvider.js';
+import { GitUri } from '../../../../../git/gitUri.js';
+import type { GitDiffFilter, GitDiffShortStat } from '../../../../../git/models/diff.js';
+import type { GitFile } from '../../../../../git/models/file.js';
+import { GitFileChange } from '../../../../../git/models/fileChange.js';
+import { GitFileIndexStatus } from '../../../../../git/models/fileStatus.js';
+import type { GitRevisionRange } from '../../../../../git/models/revision.js';
+import { deletedOrMissing, uncommitted } from '../../../../../git/models/revision.js';
+import { getChangedFilesCount } from '../../../../../git/utils/commit.utils.js';
+import {
+	createRevisionRange,
+	getRevisionRangeParts,
+	isRevisionRange,
+	stripOrigin,
+} from '../../../../../git/utils/revision.utils.js';
+import { diffRangeToEditorLine } from '../../../../../system/-webview/vscode/editors.js';
+import { debug } from '../../../../../system/decorators/log.js';
+import { union } from '../../../../../system/iterable.js';
+import { getScopedLogger } from '../../../../../system/logger.scope.js';
+import { toTokenWithInfo } from '../../../authentication/models.js';
+import type { GitHubGitProviderInternal } from '../githubGitProvider.js';
+import { fromCommitFileStatus } from '../models.js';
 
 export class DiffGitSubProvider implements GitDiffSubProvider {
 	constructor(
@@ -33,7 +37,7 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 		private readonly provider: GitHubGitProviderInternal,
 	) {}
 
-	@log()
+	@debug()
 	async getChangedFilesCount(repoPath: string, ref?: string): Promise<GitDiffShortStat | undefined> {
 		// TODO@eamodio if there is no ref we can't return anything, until we can get at the change store from RemoteHub
 		if (!ref) return undefined;
@@ -47,16 +51,16 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 		return { additions: stats.additions, deletions: stats.deletions, files: changedFiles };
 	}
 
-	@log()
+	@debug()
 	async getDiffStatus(
 		repoPath: string,
 		ref1OrRange: string | GitRevisionRange,
 		ref2?: string,
-		_options?: { filters?: GitDiffFilter[]; path?: string; similarityThreshold?: number },
+		_options?: { filters?: GitDiffFilter[]; path?: string; renameLimit?: number; similarityThreshold?: number },
 	): Promise<GitFile[] | undefined> {
 		if (repoPath == null) return undefined;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const { metadata, github, session } = await this.provider.ensureRepositoryContext(repoPath);
 
@@ -83,7 +87,7 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 
 		try {
 			let result = await github.getComparison(
-				session.accessToken,
+				toTokenWithInfo(this.provider.authenticationProviderId, session),
 				metadata.repo.owner,
 				metadata.repo.name,
 				stripOrigin(range),
@@ -94,7 +98,7 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 			let files = files1;
 			if (range2) {
 				result = await github.getComparison(
-					session.accessToken,
+					toTokenWithInfo(this.provider.authenticationProviderId, session),
 					metadata.repo.owner,
 					metadata.repo.name,
 					stripOrigin(range2),
@@ -125,13 +129,13 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 					),
 			);
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 			return undefined;
 		}
 	}
 
-	@log()
+	@debug()
 	async getNextComparisonUris(
 		repoPath: string,
 		uri: Uri,
@@ -141,7 +145,7 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 		// If we have no revision there is no next commit
 		if (!rev) return undefined;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const context = await this.provider.ensureRepositoryContext(repoPath);
@@ -156,7 +160,7 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 			}
 
 			const refs = await github.getNextCommitRefs(
-				session.accessToken,
+				toTokenWithInfo(this.provider.authenticationProviderId, session),
 				metadata.repo.owner,
 				metadata.repo.name,
 				revision,
@@ -172,14 +176,14 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 				next: new GitUri(await this.provider.getBestRevisionUri(repoPath, relativePath, refs[skip])),
 			};
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 
 			throw ex;
 		}
 	}
 
-	@log()
+	@debug()
 	async getPreviousComparisonUris(
 		repoPath: string,
 		uri: Uri,
@@ -189,7 +193,7 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 	): Promise<PreviousComparisonUrisResult | undefined> {
 		if (rev === deletedOrMissing) return undefined;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		if (rev === uncommitted) {
 			rev = undefined;
@@ -205,7 +209,7 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 			const offset = rev != null ? 1 : 0;
 
 			const result = await github.getCommitRefs(
-				session.accessToken,
+				toTokenWithInfo(this.provider.authenticationProviderId, session),
 				metadata.repo.owner,
 				metadata.repo.name,
 				stripOrigin(!rev || rev === 'HEAD' ? (await metadata.getRevision()).revision : rev),
@@ -240,14 +244,14 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 				),
 			};
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 
 			throw ex;
 		}
 	}
 
-	@log()
+	@debug()
 	async getPreviousComparisonUrisForRange(
 		repoPath: string,
 		uri: Uri,
@@ -257,7 +261,7 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 	): Promise<PreviousRangeComparisonUrisResult | undefined> {
 		if (rev === deletedOrMissing) return undefined;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const context = await this.provider.ensureRepositoryContext(repoPath);
@@ -309,7 +313,7 @@ export class DiffGitSubProvider implements GitDiffSubProvider {
 				range: { startLine: line, endLine: line, active: range.active },
 			};
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 
 			throw ex;

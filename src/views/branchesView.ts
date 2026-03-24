@@ -1,29 +1,28 @@
 import type { CancellationToken, ConfigurationChangeEvent, Disposable } from 'vscode';
 import { ProgressLocation, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import type { BranchesViewConfig, ViewBranchesLayout, ViewFilesLayout } from '../config';
-import type { Container } from '../container';
-import { GitUri } from '../git/gitUri';
-import type { GitCommit } from '../git/models/commit';
-import { isCommit } from '../git/models/commit';
-import type { GitBranchReference, GitRevisionReference } from '../git/models/reference';
-import type { RepositoryChangeEvent } from '../git/models/repository';
-import { RepositoryChange, RepositoryChangeComparisonMode } from '../git/models/repository';
-import { groupRepositories } from '../git/utils/-webview/repository.utils';
-import { getWorktreesByBranch } from '../git/utils/-webview/worktree.utils';
-import { getReferenceLabel } from '../git/utils/reference.utils';
-import { executeCommand } from '../system/-webview/command';
-import { configuration } from '../system/-webview/configuration';
-import { gate } from '../system/decorators/-webview/gate';
-import { RepositoriesSubscribeableNode } from './nodes/abstract/repositoriesSubscribeableNode';
-import { RepositoryFolderNode } from './nodes/abstract/repositoryFolderNode';
-import type { ViewNode } from './nodes/abstract/viewNode';
-import { BranchesNode } from './nodes/branchesNode';
-import { BranchNode } from './nodes/branchNode';
-import { BranchOrTagFolderNode } from './nodes/branchOrTagFolderNode';
-import type { GroupedViewContext } from './viewBase';
-import { ViewBase } from './viewBase';
-import type { CopyNodeCommandArgs } from './viewCommands';
-import { registerViewCommand } from './viewCommands';
+import type { BranchesViewConfig, ViewBranchesLayout, ViewFilesLayout } from '../config.js';
+import type { Container } from '../container.js';
+import { GitUri } from '../git/gitUri.js';
+import type { GitCommit } from '../git/models/commit.js';
+import { isCommit } from '../git/models/commit.js';
+import type { GitBranchReference, GitRevisionReference } from '../git/models/reference.js';
+import type { RepositoryChangeEvent } from '../git/models/repository.js';
+import { getWorktreesByBranch } from '../git/utils/-webview/worktree.utils.js';
+import { getReferenceLabel } from '../git/utils/reference.utils.js';
+import { executeCommand } from '../system/-webview/command.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { gate } from '../system/decorators/gate.js';
+import { RepositoriesSubscribeableNode } from './nodes/abstract/repositoriesSubscribeableNode.js';
+import { RepositoryFolderNode } from './nodes/abstract/repositoryFolderNode.js';
+import type { ViewNode } from './nodes/abstract/viewNode.js';
+import { BranchesNode } from './nodes/branchesNode.js';
+import { BranchNode } from './nodes/branchNode.js';
+import { BranchOrTagFolderNode } from './nodes/branchOrTagFolderNode.js';
+import { updateSorting, updateSortingDirection } from './utils/-webview/sorting.utils.js';
+import type { GroupedViewContext, RevealOptions } from './viewBase.js';
+import { ViewBase } from './viewBase.js';
+import type { CopyNodeCommandArgs } from './viewCommands.js';
+import { registerViewCommand } from './viewCommands.js';
 
 export class BranchesRepositoryNode extends RepositoryFolderNode<BranchesView, BranchesNode> {
 	async getChildren(): Promise<ViewNode[]> {
@@ -32,19 +31,20 @@ export class BranchesRepositoryNode extends RepositoryFolderNode<BranchesView, B
 	}
 
 	protected changed(e: RepositoryChangeEvent): boolean {
-		if (this.view.config.showStashes && e.changed(RepositoryChange.Stash, RepositoryChangeComparisonMode.Any)) {
+		if (this.view.config.showStashes && e.changed('stash')) {
 			return true;
 		}
 
 		return e.changed(
-			RepositoryChange.Config,
-			RepositoryChange.Heads,
-			RepositoryChange.Index,
-			RepositoryChange.Remotes,
-			RepositoryChange.RemoteProviders,
-			RepositoryChange.PausedOperationStatus,
-			RepositoryChange.Unknown,
-			RepositoryChangeComparisonMode.Any,
+			'config',
+			'heads',
+			'index',
+			'remotes',
+			'remoteProviders',
+			'pausedOp',
+			'starred',
+			'worktrees',
+			'unknown',
 		);
 	}
 }
@@ -59,15 +59,10 @@ export class BranchesViewNode extends RepositoriesSubscribeableNode<BranchesView
 				await this.view.container.git.isDiscoveringRepositories;
 			}
 
-			let repositories = this.view.container.git.openRepositories;
+			const repositories = this.view.getFilteredRepositories();
 			if (!repositories.length) {
 				this.view.message = 'No branches could be found.';
 				return [];
-			}
-
-			if (configuration.get('views.collapseWorktreesWhenPossible')) {
-				const grouped = await groupRepositories(repositories);
-				repositories = [...grouped.keys()];
 			}
 
 			// Get all the worktree branches (and track if they are opened) to pass along downstream, e.g. in the BranchNode to display an indicator
@@ -76,8 +71,10 @@ export class BranchesViewNode extends RepositoriesSubscribeableNode<BranchesView
 				worktreesByBranch: worktreesByBranch?.size ? worktreesByBranch : undefined,
 			});
 
+			const repo = this.view.container.git.getBestRepositoryOrFirst();
 			this.children = repositories.map(
-				r => new BranchesRepositoryNode(GitUri.fromRepoPath(r.path), this.view, this, r),
+				r =>
+					new BranchesRepositoryNode(GitUri.fromRepoPath(r.path), this.view, this, r, { expand: r === repo }),
 			);
 		}
 
@@ -148,8 +145,13 @@ export class BranchesView extends ViewBase<'branches', BranchesViewNode, Branche
 				},
 				this,
 			),
+			registerViewCommand(this.getQualifiedCommand('filterRepositories'), () => this.filterRepositories(), this),
 			registerViewCommand(this.getQualifiedCommand('setLayoutToList'), () => this.setLayout('list'), this),
 			registerViewCommand(this.getQualifiedCommand('setLayoutToTree'), () => this.setLayout('tree'), this),
+			registerViewCommand(this.getQualifiedCommand('setSortByDate'), () => this.setSortByDate(), this),
+			registerViewCommand(this.getQualifiedCommand('setSortByName'), () => this.setSortByName(), this),
+			registerViewCommand(this.getQualifiedCommand('setSortDescending'), () => this.setSortDescending(), this),
+			registerViewCommand(this.getQualifiedCommand('setSortAscending'), () => this.setSortAscending(), this),
 			registerViewCommand(
 				this.getQualifiedCommand('setFilesLayoutToAuto'),
 				() => this.setFilesLayout('auto'),
@@ -281,14 +283,7 @@ export class BranchesView extends ViewBase<'branches', BranchesViewNode, Branche
 	}
 
 	@gate(() => '')
-	async revealBranch(
-		branch: GitBranchReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealBranch(branch: GitBranchReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -310,14 +305,7 @@ export class BranchesView extends ViewBase<'branches', BranchesViewNode, Branche
 	}
 
 	@gate(() => '')
-	async revealCommit(
-		commit: GitRevisionReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealCommit(commit: GitRevisionReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -339,10 +327,7 @@ export class BranchesView extends ViewBase<'branches', BranchesViewNode, Branche
 	}
 
 	@gate(() => '')
-	async revealRepository(
-		repoPath: string,
-		options?: { select?: boolean; focus?: boolean; expand?: boolean | number },
-	): Promise<ViewNode | undefined> {
+	async revealRepository(repoPath: string, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const node = await this.findNode(n => n instanceof RepositoryFolderNode && n.repoPath === repoPath, {
 			maxDepth: 1,
 			canTraverse: n => n instanceof BranchesViewNode || n instanceof RepositoryFolderNode,
@@ -361,6 +346,22 @@ export class BranchesView extends ViewBase<'branches', BranchesViewNode, Branche
 
 	private setFilesLayout(layout: ViewFilesLayout) {
 		return configuration.updateEffective(`views.${this.configKey}.files.layout` as const, layout);
+	}
+
+	private setSortByDate() {
+		return updateSorting('sortBranchesBy', 'date', 'desc');
+	}
+
+	private setSortByName() {
+		return updateSorting('sortBranchesBy', 'name', 'asc');
+	}
+
+	private setSortDescending() {
+		return updateSortingDirection('sortBranchesBy', 'desc');
+	}
+
+	private setSortAscending() {
+		return updateSortingDirection('sortBranchesBy', 'asc');
 	}
 
 	private setShowAvatars(enabled: boolean) {

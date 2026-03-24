@@ -1,4 +1,4 @@
-import type { PromptTemplate } from './models/promptTemplates';
+import type { PromptTemplate } from './models/promptTemplates.js';
 
 export const generateCommitMessage: PromptTemplate<'generate-commitMessage'> = {
 	id: 'generate-commitMessage_v2',
@@ -340,8 +340,8 @@ Based on the provided commit messages and associated issues, create a set of mar
 };
 
 export const generateSearchQuery: PromptTemplate<'generate-searchQuery'> = {
-	id: 'generate-searchQuery',
-	variables: ['query', 'context', 'instructions'],
+	id: 'generate-searchQuery_v2',
+	variables: ['query', 'date', 'context', 'instructions'],
 	template: `You are an advanced AI assistant that converts natural language queries into structured Git search operators. Your task is to analyze a user's natural language query about their Git repository history and convert it into the appropriate search operators.
 
 Available search operators:
@@ -350,83 +350,179 @@ Available search operators:
 - 'commit:' - Search by a specific commit SHA (e.g. 'commit:4ce3a')
 - 'file:' - Search by file path (e.g. 'file:"package.json"', 'file:"*.ts"'); maps to \`git log -- <value>\`
 - 'change:' - Search by specific code changes using regular expressions (e.g. 'change:"function.*auth"', 'change:"import.*react"'); maps to \`git log -G<value>\`
-- 'type:' - Search by type -- only stash is currently supported (e.g. 'type:stash')
-- 'after:' - Search for commits after a certain date or range (e.g. 'after:2023-01-01', 'after:"6 months ago"'); maps to \`git log --since=<value>\`
-- 'before:' - Search for commits before a certain date or range (e.g. 'before:2023-01-01', 'before:"6 months ago"'); maps to \`git log --until=<value>\`
+- 'type:' - Search by type -- supports stash and tip (e.g. 'type:stash', 'type:tip')
+- 'ref:' - Search for commits reachable by a reference (branch, tag, commit) or reference range. Supports single refs (e.g. 'ref:main', 'ref:v1.0'), two-dot ranges (e.g. 'ref:main..feature' for commits in feature but not in main), three-dot ranges (e.g. 'ref:main...feature' for symmetric difference), and relative refs (e.g. 'ref:HEAD~5..HEAD'); maps to \`git log <ref>\`
+- 'after:' - Search for commits after a certain date or range (e.g. 'after:2023-01-01', 'after:"6 months ago"', 'after:"last Tuesday"', 'after:"noon"', 'after:"1 month 2 days ago"'); maps to \`git log --since=<value>\`
+- 'before:' - Search for commits before a certain date or range (e.g. 'before:2023-01-01', 'before:"6 months ago"', 'before:"yesterday"', 'before:"3PM GMT"'); maps to \`git log --until=<value>\`
 
-File and change values should be double-quoted. Time-based searches should be converted to appropriate after or before operators. You can use multiple message, author, file, and change operators at the same time if needed.
+File and change values should be double-quoted. You can use multiple message, author, file, change, and ref operators at the same time if needed.
 
-Examples:
-- 'Show me all commits from the last six months that touched the authentication system' → 'message:"auth" file:"*auth*" after:"6 months ago"'
-- 'Find commits by John from last week' → 'author:"john" after:"1 week ago"'
-- 'Show me all commits that modified package.json in the last month' → 'file:"package.json" after:"1 month ago"'
-- 'Find my recent commits about fixing bugs' → 'author:"@me" message:"fix" message:"bug" after:"2 weeks ago"'
-- 'Show commits that added React imports' → 'change:"import.*react"'
-- 'Find the PR where react-query dependency was first introduced' → 'change:"react-query" file:"package.json"'
+Use 'ref:' when the query involves exploring commit history within or between specific references. Use temporal operators ('after:', 'before:') for date-based filtering. These operators can be combined when appropriate.
+
+IMPORTANT: When "after" or "since" is used with a reference (branch, tag, commit SHA), it refers to commit ancestry, not time. Use ref ranges (e.g., 'ref:v1.0..HEAD' for "commits after tag v1.0"). Only use 'after:' for actual dates or time expressions.
+
+Temporal queries leverage Git's 'approxidate' parser, which understands relative date expressions like "yesterday", "5 minutes ago", "1 month 2 days ago", "last Tuesday", "noon", and explicit timezones like "3PM GMT".
+
+
+The current date is \${date}
+\${context}
 
 User Query: \${query}
 
-\${context}
-
 \${instructions}
 
-Convert the user's natural language query into the appropriate search operators. Return only the search query string without any explanatory text. If the query cannot be converted to search operators, return the original query as a message search.`,
+Convert the user's natural language query into the appropriate search operators. Return only the search query string without any explanatory text. If the query cannot be converted to search operators, return the original query as a message search. For complex temporal expressions that might be ambiguous, prefer simpler, more reliable relative date formats.`,
 };
 
-export const generateRebase: PromptTemplate<'generate-rebase'> = {
-	id: 'generate-rebase',
-	variables: ['diff', 'commits', 'data', 'context', 'instructions'],
-	template: `You are an advanced AI programming assistant tasked with organizing code changes into commits. Your goal is to create a new set of commits that are related, grouped logically, atomic, and easy to review. You will be working with code changes provided in a unified diff format.
+export const generateCommits: PromptTemplate<'generate-commits'> = {
+	id: 'generate-commits_v2',
+	variables: ['hunks', 'existingCommits', 'commitMessages', 'hunkMap', 'instructions'],
+	template: `You are an advanced AI programming assistant tasked with organizing code changes into commits. Your goal is to create a complete set of commits that are related, grouped logically, atomic, and easy to review. You will be working with individual code hunks and may have some existing commits that already have hunks assigned.
 
-First, examine the following unified Git diff of code changes:
+First, examine the following JSON array of code hunks that need to be organized:
 
-<unified_diff>
-\${diff}
-</unified_diff>
+<hunks>
+\${hunks}
+</hunks>
 
-Next, examine the following JSON array which represents a mapping of index to hunk headers in the unified_diff to be used later when mapping hunks to commits:
+Next, examine the following JSON array of existing commits (if any) that already have some hunks assigned:
+
+<existing_commits>
+\${existingCommits}
+</existing_commits>
+
+Next, examine the following JSON array of commit messages from the commits that the hunks came from:
+
+<commit_messages>
+\${commitMessages}
+</commit_messages>
+
+Finally, examine the following JSON array which represents a mapping of hunk indices to hunk headers for reference:
+
 <hunk_map>
-\${data}
+\${hunkMap}
 </hunk_map>
 
+Your task is to create a complete commit organization that includes:
+1. All existing commits (unchanged) that already have hunks assigned
+2. New commits for any unassigned hunks, organized logically
 
-Your task is to group the hunks in unified_diff into a set of commits, ordered into a commit history as an array. Follow these guidelines:
+Follow these guidelines:
 
-1. Only organize the hunks themselves, not individual lines within hunks.
-2. Group hunks into logical units that make sense together and can be applied atomically.
-3. Ensure each commit is self-contained and only depends on commits that come before it in the new history.
-4. Write meaningful commit messages that accurately describe the changes in each commit.
-5. Provide a detailed explanation of the changes in each commit.
-6. Make sure the new commit history is easy to review and understand.
+1. Preserve all existing commits exactly as they are - do not modify their messages, explanations, or assigned hunks
+2. Use the commit messages, if provided, as context to help you understand the source of the hunks. These were commits that are being reorganized, so you do not need to reuse the messages, but they can help you understand the original intent of the changes in the hunks
+3. For unassigned hunks, group them into logical units that make sense together and can be applied atomically
+4. Use each hunk only once. Ensure all hunks are assigned to exactly one commit
+5. Ensure each new commit is self-contained and atomic
+6. Order commits logically (existing commits first, then new commits in dependency order)
+7. Write a commit message for each new commit using these detailed steps:
 
-Output your new commit history as a JSON array. Each commit in the array should be an object representing a grouping of hunks forming that commit, with the following properties:
-- "message": A string containing the commit message.
-- "explanation": A string with a detailed explanation of the changes in the commit. Write the explanation as if you were explaining the changes to a reviewer who is familiar with the codebase but not the specific changes. Walk through the changes and make references to specific changes where needed, explaining how they achieve the objective of the commit.
+7a. Carefully analyze the hunks assigned to each commit, focusing on:
+   - The purpose and rationale of the changes
+   - Any problems addressed or benefits introduced
+   - Any significant logic changes or algorithmic improvements
+7b. Ensure the following when composing each commit message:
+   - Emphasize the 'why' of the change, its benefits, or the problem it addresses
+   - Use an informal yet professional tone
+   - Use a future-oriented manner, third-person singular present tense (e.g., 'Fixes', 'Updates', 'Improves', 'Adds', 'Removes')
+   - Be clear and concise
+   - Synthesize only meaningful information from the code changes
+   - Avoid outputting code, specific code identifiers, names, or file names unless crucial for understanding
+   - Avoid repeating information, broad generalities, and unnecessary phrases like "this", "this commit", or "this change"
+7c. Summarize the main purpose of the changes in a single, concise sentence for the first line of the commit message you generate:
+   - Start with a third-person singular present tense verb
+   - Limit to 50 characters if possible
+7d. Then add a blank line followed by some details of the changes, completed as follows:
+   - Add line breaks for readability and to separate independent ideas
+   - Focus on the "why" rather than the "what" of the changes
+   - Explain the rationale and benefits of the changes
+7e. If the changes are related to a specific issue or ticket, include the reference (e.g., "Fixes #123" or "Relates to JIRA-456") at the end of the commit message
+
+8. Write a detailed explanation for each commit (separate from the commit message), walking through the changes in further detail as if explaining them to a reviewer.
+
+Output your complete commit organization as a JSON array. Each commit in the array should be an object with the following properties:
+- "message": A string containing the commit message
+- "explanation": A string with a detailed explanation of the changes in the commit. Note that this is separate from the commit message and provides more detail than in the message itself.
 - "hunks": An array of objects, each representing a hunk in the commit. Each hunk object should have:
-  - "hunk": The hunk index (number) from the hunk_map, matching the equivalent hunk you chose from the unified_diff.
+  - "hunk": The hunk index (number) from the hunk_map
 
-Once you've completed your analysis, generate the JSON output following the specified format.
-
-Here's an example of the expected JSON structure (note that this is just a structural example and does not reflect the actual content you should produce):
-
+Write the JSON structure below inside a <output> tag and include no other text:
+<output>
 [
-  {
-    "message": "Example commit message",
-    "explanation": "Detailed explanation of the changes in this commit",
-    "hunks": [
-      {
-        "hunk": 2
-      },
-      {
-        "hunk": 7
-      }
-    ]
-  }
+   {
+      "message": "[commit message here]",
+      "explanation": "[detailed explanation of changes here]",
+      "hunks": [{"hunk": [index from hunk_map]}, {"hunk": [index from hunk_map]}]
+   }
 ]
+</output>
 
-Remember to base your organization of commits solely on the provided unified_diff and hunk_map. Do not introduce any new changes or modify the content of the hunks. Your task is to organize the existing hunks in a logical and reviewable manner.
+Remember:
+- Text in [] brackets above should be replaced with your own text, not including the brackets
+- Include all existing commits unchanged
+- Organize all unassigned hunks into new commits
+- Every hunk must be assigned to exactly one commit
+- Base your organization on the actual code changes in the hunks
 
 \${instructions}
 
-Now, proceed with your analysis and organization of the commits. Output only the JSON array containing the commits, and nothing else.`,
+Now, proceed with your analysis and organization of the commits. Return only the <output> tag and no other text.
+`,
+};
+
+export const startWorkFromIssue: PromptTemplate<'start-work-issue'> = {
+	id: 'start-work-issue',
+	variables: ['issue', 'instructions'],
+	template: `You are an advanced AI programming assistant tasked with helping a developer start work on a new issue. Your goal is to analyze the issue details and provide a clear plan of action, estimate, and implement a solution.
+
+First, examine the following JSON object containing the issue details:
+
+<issue>
+\${issue}
+</issue>
+
+To effectively start work on this issue, follow these steps:
+
+1. Carefully analyze the issue details, focusing on:
+   - The problem statement and requirements
+   - Any constraints or special considerations
+   - The desired outcome or solution
+2. Develop a clear plan of action that outlines the steps needed to address the issue
+3. Provide an estimate of the time and resources required to complete the work
+4. If applicable, implement a solution or provide code snippets that demonstrate how to address the issue
+
+You can use GitKraken MCP tools to gather additional context about the repository and related issues/PRs.
+
+\${instructions}
+
+Now, proceed with your analysis and provide a clear plan of action, estimate, and implementation for the issue. Return only the relevant information without any additional text.`,
+};
+
+export const reviewPullRequest: PromptTemplate<'start-review-pullRequest'> = {
+	id: 'start-review-pullRequest',
+	variables: ['prData', 'instructions'],
+	template: `You are an advanced AI programming assistant tasked with reviewing a pull request (PR). Your goal is to analyze the PR details and provide a comprehensive review that highlights strengths, identifies potential issues, and suggests improvements.
+
+First, examine the following JSON object containing the PR details:
+
+<prData>
+\${prData}
+</prData>
+
+To effectively review this PR, follow these steps:
+
+1. Carefully analyze the PR details, focusing on:
+   - The problem statement and requirements
+   - Any constraints or special considerations
+   - The desired outcome or solution
+2. Provide a detailed review that covers:
+   - What the PR does well and why it is effective
+   - Any potential issues or areas for improvement
+   - Suggestions for how to address the issues or improve the PR
+
+You can use GitKraken MCP tools to gather additional context about the repository and related issues/PRs.
+
+\${instructions}
+
+Now, proceed with your analysis and provide a comprehensive review of the PR. Return only the relevant information without any additional text.`,
 };

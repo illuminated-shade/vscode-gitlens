@@ -1,13 +1,12 @@
 import type { CancellationToken, Range, Uri } from 'vscode';
-import type { SearchQuery } from '../../../../constants.search';
-import type { Source } from '../../../../constants.telemetry';
-import type { Container } from '../../../../container';
-import { CancellationError, isCancellationError } from '../../../../errors';
-import type { GitCache } from '../../../../git/cache';
-import type { GitCommandOptions } from '../../../../git/commandOptions';
-import { GitErrorHandling } from '../../../../git/commandOptions';
-import { CherryPickError, CherryPickErrorReason } from '../../../../git/errors';
+import type { SearchQuery } from '../../../../constants.search.js';
+import type { Source } from '../../../../constants.telemetry.js';
+import type { Container } from '../../../../container.js';
+import { CancellationError, isCancellationError } from '../../../../errors.js';
+import type { GitCache } from '../../../../git/cache.js';
+import type { GitExecOptions, GitResult } from '../../../../git/execTypes.js';
 import type {
+	GitCommitReachability,
 	GitCommitsSubProvider,
 	GitLogForPathOptions,
 	GitLogOptions,
@@ -16,50 +15,55 @@ import type {
 	IncomingActivityOptions,
 	LeftRightCommitCountResult,
 	SearchCommitsResult,
-} from '../../../../git/gitProvider';
-import { GitUri } from '../../../../git/gitUri';
-import type { GitBlame } from '../../../../git/models/blame';
-import type { GitCommitFileset, GitStashCommit } from '../../../../git/models/commit';
-import { GitCommit, GitCommitIdentity } from '../../../../git/models/commit';
-import type { GitDiffFilter, ParsedGitDiffHunks } from '../../../../git/models/diff';
-import { GitFileChange } from '../../../../git/models/fileChange';
-import type { GitFileStatus } from '../../../../git/models/fileStatus';
-import type { GitLog } from '../../../../git/models/log';
-import type { GitReflog } from '../../../../git/models/reflog';
-import type { GitRevisionRange } from '../../../../git/models/revision';
-import type { GitUser } from '../../../../git/models/user';
+} from '../../../../git/gitProvider.js';
+import { GitUri } from '../../../../git/gitUri.js';
+import type { GitBlame } from '../../../../git/models/blame.js';
+import type { GitCommitFileset, GitStashCommit } from '../../../../git/models/commit.js';
+import { GitCommit, GitCommitIdentity, isStash } from '../../../../git/models/commit.js';
+import type { GitDiffFilter, ParsedGitDiffHunks } from '../../../../git/models/diff.js';
+import { GitFileChange } from '../../../../git/models/fileChange.js';
+import type { GitFileStatus } from '../../../../git/models/fileStatus.js';
+import type { GitLog } from '../../../../git/models/log.js';
+import type { GitReflog } from '../../../../git/models/reflog.js';
+import type { GitRevisionRange } from '../../../../git/models/revision.js';
+import type { CommitSignature } from '../../../../git/models/signature.js';
+import type { GitUser } from '../../../../git/models/user.js';
 import type {
 	CommitsInFileRangeLogParser,
 	CommitsLogParser,
 	CommitsWithFilesLogParser,
 	ParsedCommit,
 	ParsedStash,
-} from '../../../../git/parsers/logParser';
+	ParsedStashWithFiles,
+} from '../../../../git/parsers/logParser.js';
 import {
 	getCommitsLogParser,
-	getShaAndDatesLogParser,
 	getShaAndFilesAndStatsLogParser,
 	getShaLogParser,
-} from '../../../../git/parsers/logParser';
-import { parseGitRefLog, parseGitRefLogDefaultFormat } from '../../../../git/parsers/reflogParser';
-import type { SearchQueryFilters } from '../../../../git/search';
-import { parseSearchQueryCommand, processNaturalLanguageToSearchQuery } from '../../../../git/search';
-import { createUncommittedChangesCommit } from '../../../../git/utils/-webview/commit.utils';
-import { isRevisionRange, isSha, isUncommitted, isUncommittedStaged } from '../../../../git/utils/revision.utils';
-import { isUserMatch } from '../../../../git/utils/user.utils';
-import { configuration } from '../../../../system/-webview/configuration';
-import { splitPath } from '../../../../system/-webview/path';
-import { log } from '../../../../system/decorators/log';
-import { filterMap, first, join, last, some } from '../../../../system/iterable';
-import { Logger } from '../../../../system/logger';
-import { getLogScope } from '../../../../system/logger.scope';
-import { isFolderGlob, stripFolderGlob } from '../../../../system/path';
-import type { CachedLog, TrackedGitDocument } from '../../../../trackers/trackedDocument';
-import { GitDocumentState } from '../../../../trackers/trackedDocument';
-import type { Git, GitResult } from '../git';
-import { gitConfigsLog, gitConfigsLogWithFiles, GitErrors } from '../git';
-import type { LocalGitProviderInternal } from '../localGitProvider';
-import { convertStashesToStdin } from './stash';
+} from '../../../../git/parsers/logParser.js';
+import { parseGitRefLog, parseGitRefLogDefaultFormat } from '../../../../git/parsers/reflogParser.js';
+import { parseSignatureOutput, signatureFormat } from '../../../../git/parsers/signatureParser.js';
+import type { SearchQueryFilters } from '../../../../git/search.js';
+import { parseSearchQueryGitCommand } from '../../../../git/search.js';
+import { processNaturalLanguageToSearchQuery } from '../../../../git/search.naturalLanguage.js';
+import { createUncommittedChangesCommit } from '../../../../git/utils/-webview/commit.utils.js';
+import { isRevisionRange, isSha, isUncommitted, isUncommittedStaged } from '../../../../git/utils/revision.utils.js';
+import { isUserMatch } from '../../../../git/utils/user.utils.js';
+import { configuration } from '../../../../system/-webview/configuration.js';
+import { splitPath } from '../../../../system/-webview/path.js';
+import { debug, trace } from '../../../../system/decorators/log.js';
+import { filterMap, findLast, first, join, last, some } from '../../../../system/iterable.js';
+import { getScopedLogger } from '../../../../system/logger.scope.js';
+import { isFolderGlob, stripFolderGlob } from '../../../../system/path.js';
+import type { CacheController } from '../../../../system/promiseCache.js';
+import { maybeStopWatch } from '../../../../system/stopwatch.js';
+import { createDisposable } from '../../../../system/unifiedDisposable.js';
+import type { CachedLog, TrackedGitDocument } from '../../../../trackers/trackedDocument.js';
+import { GitDocumentState } from '../../../../trackers/trackedDocument.js';
+import type { Git } from '../git.js';
+import { gitConfigsLog, gitConfigsLogWithFiles, GitErrors } from '../git.js';
+import type { LocalGitProviderInternal } from '../localGitProvider.js';
+import { convertStashesToStdin } from './stash.js';
 
 const emptyPromise: Promise<GitBlame | ParsedGitDiffHunks | GitLog | undefined> = Promise.resolve(undefined);
 const reflogCommands = ['merge', 'pull'];
@@ -72,68 +76,27 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		private readonly provider: LocalGitProviderInternal,
 	) {}
 
-	private get useCaching() {
-		return configuration.get('advanced.caching.enabled');
-	}
-
-	@log()
-	async cherryPick(
+	@debug()
+	async createUnreachableCommitFromTree(
 		repoPath: string,
-		revs: string[],
-		options?: { edit?: boolean; noCommit?: boolean },
-	): Promise<void> {
-		const args = ['cherry-pick'];
-		if (options?.edit) {
-			args.push('-e');
-		}
-		if (options?.noCommit) {
-			args.push('-n');
-		}
-
-		if (revs.length > 1) {
-			const parser = getShaAndDatesLogParser();
-			// Ensure the revs are in reverse committer date order
-			const result = await this.git.exec(
-				{ cwd: repoPath, stdin: join(revs, '\n') },
-				'log',
-				'--no-walk',
-				'--stdin',
-				...parser.arguments,
-				'--',
-			);
-			const commits = [...parser.parse(result.stdout)].sort(
-				(c1, c2) =>
-					Number(c1.committerDate) - Number(c2.committerDate) ||
-					Number(c1.authorDate) - Number(c2.authorDate),
-			);
-			revs = commits.map(c => c.sha);
-		}
-
-		args.push(...revs);
-
-		try {
-			await this.git.exec({ cwd: repoPath, errors: GitErrorHandling.Throw }, ...args);
-		} catch (ex) {
-			const msg: string = ex?.toString() ?? '';
-
-			let reason: CherryPickErrorReason = CherryPickErrorReason.Other;
-			if (
-				GitErrors.changesWouldBeOverwritten.test(msg) ||
-				GitErrors.changesWouldBeOverwritten.test(ex.stderr ?? '')
-			) {
-				reason = CherryPickErrorReason.AbortedWouldOverwrite;
-			} else if (GitErrors.conflict.test(msg) || GitErrors.conflict.test(ex.stdout ?? '')) {
-				reason = CherryPickErrorReason.Conflicts;
-			} else if (GitErrors.emptyPreviousCherryPick.test(msg)) {
-				reason = CherryPickErrorReason.EmptyCommit;
-			}
-
-			debugger;
-			throw new CherryPickError(reason, ex, revs);
-		}
+		tree: string,
+		parent: string,
+		message: string,
+		cancellation?: CancellationToken,
+	): Promise<string> {
+		const result = await this.git.exec(
+			{ cwd: repoPath, cancellation: cancellation, errors: 'throw' },
+			'commit-tree',
+			tree,
+			'-p',
+			parent,
+			'-m',
+			message,
+		);
+		return result.stdout.trim();
 	}
 
-	@log()
+	@debug()
 	async getCommit(repoPath: string, rev: string, cancellation?: CancellationToken): Promise<GitCommit | undefined> {
 		if (isUncommitted(rev, true)) {
 			return createUncommittedChangesCommit(
@@ -151,10 +114,10 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		return log.commits.get(rev) ?? first(log.commits.values());
 	}
 
-	@log({ exit: true })
+	@debug({ exit: true })
 	async getCommitCount(repoPath: string, rev: string, cancellation?: CancellationToken): Promise<number | undefined> {
 		const result = await this.git.exec(
-			{ cwd: repoPath, cancellation: cancellation, errors: GitErrorHandling.Ignore },
+			{ cwd: repoPath, cancellation: cancellation, errors: 'ignore' },
 			'rev-list',
 			'--count',
 			rev,
@@ -169,7 +132,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		return isNaN(count) ? undefined : count;
 	}
 
-	@log()
+	@debug()
 	async getCommitFiles(repoPath: string, rev: string, cancellation?: CancellationToken): Promise<GitFileChange[]> {
 		const parser = getShaAndFilesAndStatsLogParser();
 		const result = await this.git.exec(
@@ -191,13 +154,17 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 					f.originalPath,
 					undefined,
 					{ additions: f.additions, deletions: f.deletions, changes: 0 },
+					undefined,
+					undefined,
+					f.mode,
+					f.oid ? { oid: f.oid, previousOid: f.previousOid } : undefined,
 				),
 		);
 
 		return files ?? [];
 	}
 
-	@log()
+	@debug()
 	async getCommitForFile(
 		repoPath: string | undefined,
 		uri: Uri,
@@ -205,7 +172,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		options?: { firstIfNotFound?: boolean },
 		cancellation?: CancellationToken,
 	): Promise<GitCommit | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const [relativePath, root] = splitPath(uri, repoPath);
 
@@ -215,7 +182,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 
 			let commit;
 			if (rev) {
-				const commit = log.commits.get(rev);
+				commit = log.commits.get(rev);
 				if (commit == null && !options?.firstIfNotFound) {
 					// If the ref isn't a valid sha we will never find it, so let it fall through so we return the first
 					if (isSha(rev) || isUncommitted(rev)) return undefined;
@@ -224,20 +191,102 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 
 			return commit ?? first(log.commits.values());
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			if (isCancellationError(ex)) throw ex;
 
 			return undefined;
 		}
 	}
 
-	@log()
+	@debug()
+	async getCommitReachability(
+		repoPath: string,
+		rev: string,
+		cancellation?: CancellationToken,
+	): Promise<GitCommitReachability | undefined> {
+		if (repoPath == null || isUncommitted(rev)) return undefined;
+
+		const scope = getScopedLogger();
+
+		const getCore = async (cacheable?: CacheController) => {
+			try {
+				// Use for-each-ref with %(HEAD) to mark current branch with *
+				const result = await this.git.exec(
+					{ cwd: repoPath, cancellation: cancellation, errors: 'ignore' },
+					'for-each-ref',
+					'--contains',
+					rev,
+					'--format=%(HEAD)%(refname)',
+					'--sort=-version:refname',
+					'--sort=-committerdate',
+					'--sort=-HEAD',
+					'refs/heads/',
+					'refs/remotes/',
+					'refs/tags/',
+				);
+				if (cancellation?.isCancellationRequested) throw new CancellationError();
+
+				const refs: GitCommitReachability['refs'] = [];
+
+				// Parse branches from refs/heads/ and refs/remotes/
+				if (result?.stdout) {
+					const lines = result.stdout.split('\n');
+
+					for (let line of lines) {
+						line = line.trim();
+						if (!line) continue;
+
+						// %(HEAD) outputs '*' for current branch, ' ' for others
+						const isCurrent = line.startsWith('*');
+						const refname = isCurrent ? line.substring(1) : line; // Skip the HEAD marker
+
+						// Skip HEADs
+						if (refname.endsWith('/HEAD')) continue;
+
+						if (refname.startsWith('refs/heads/')) {
+							// Remove 'refs/heads/'
+							const name = refname.substring(11);
+							refs.push({
+								refType: 'branch',
+								name: name,
+								remote: false,
+								current: isCurrent,
+							});
+						} else if (refname.startsWith('refs/remotes/')) {
+							// Remove 'refs/remotes/'
+							refs.push({ refType: 'branch', name: refname.substring(13), remote: true });
+						} else if (refname.startsWith('refs/tags/')) {
+							// Remove 'refs/tags/'
+							refs.push({ refType: 'tag', name: refname.substring(10) });
+						}
+					}
+				}
+
+				// Sort to move tags to the end, preserving order within each type
+				refs.sort((a, b) => (a.refType !== b.refType ? (a.refType === 'tag' ? 1 : -1) : 0));
+
+				return { refs: refs };
+			} catch (ex) {
+				cacheable?.invalidate();
+				debugger;
+				if (isCancellationError(ex)) throw ex;
+
+				scope?.error(ex);
+
+				return undefined;
+			}
+		};
+
+		return this.cache.reachability.getOrCreate(repoPath, rev, getCore);
+	}
+
+	@debug()
 	async getIncomingActivity(
 		repoPath: string,
 		options?: IncomingActivityOptions,
 		cancellation?: CancellationToken,
 	): Promise<GitReflog | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const args = ['--walk-reflogs', `--format=${parseGitRefLogDefaultFormat}`, '--date=iso8601'];
 
@@ -274,7 +323,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 
 			return reflog;
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			if (isCancellationError(ex)) throw ex;
 
 			return undefined;
@@ -314,27 +363,30 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		};
 	}
 
-	@log({ exit: true })
+	@debug({ exit: true })
 	async getInitialCommitSha(repoPath: string, cancellation?: CancellationToken): Promise<string | undefined> {
-		try {
-			const result = await this.git.exec(
-				{ cwd: repoPath, cancellation: cancellation, errors: GitErrorHandling.Ignore },
-				'rev-list',
-				`--max-parents=0`,
-				'HEAD',
-				'--',
-			);
-			if (result.cancelled || cancellation?.isCancellationRequested) throw new CancellationError();
+		// Initial commit SHA is shared across all worktrees
+		return this.cache.getInitialCommitSha(repoPath, async commonPath => {
+			try {
+				const result = await this.git.exec(
+					{ cwd: commonPath, cancellation: cancellation, errors: 'ignore' },
+					'rev-list',
+					`--max-parents=0`,
+					'HEAD',
+					'--',
+				);
+				if (result.cancelled || cancellation?.isCancellationRequested) throw new CancellationError();
 
-			return result.stdout.trim().split('\n')?.[0];
-		} catch (ex) {
-			if (isCancellationError(ex)) throw ex;
+				return result.stdout.trim().split('\n')?.[0];
+			} catch (ex) {
+				if (isCancellationError(ex)) throw ex;
 
-			return undefined;
-		}
+				return undefined;
+			}
+		});
 	}
 
-	@log()
+	@debug()
 	async getLeftRightCommitCount(
 		repoPath: string,
 		range: GitRevisionRange,
@@ -344,7 +396,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		const authors = options?.authors?.length ? options.authors.map(a => `--author=^${a.name} <${a.email}>$`) : [];
 
 		const result = await this.git.exec(
-			{ cwd: repoPath, cancellation: cancellation, errors: GitErrorHandling.Ignore },
+			{ cwd: repoPath, cancellation: cancellation, errors: 'ignore' },
 			'rev-list',
 			'--left-right',
 			'--count',
@@ -370,7 +422,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		return counts;
 	}
 
-	@log()
+	@debug()
 	async getLog(
 		repoPath: string,
 		rev?: string | undefined,
@@ -380,6 +432,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		return this.getLogCore(repoPath, rev, options, cancellation);
 	}
 
+	@trace({ args: (repoPath, rev) => ({ repoPath: repoPath, rev: rev }), exit: true })
 	private async getLogCore(
 		repoPath: string,
 		rev?: string | undefined,
@@ -389,7 +442,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		cancellation?: CancellationToken,
 		additionalArgs?: string[],
 	): Promise<GitLog | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const currentUserPromise = this.provider.config.getCurrentUser(repoPath);
@@ -512,7 +565,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 			const currentUser = await currentUserPromise.catch(() => undefined);
 			if (cancellation?.isCancellationRequested) throw new CancellationError();
 
-			const cmdOpts: GitCommandOptions = {
+			const cmdOpts: GitExecOptions = {
 				cwd: repoPath,
 				cancellation: cancellation,
 				configs: gitConfigsLogWithFiles,
@@ -563,7 +616,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 			const log: GitLog = {
 				repoPath: repoPath,
 				commits: commits,
-				sha: rev,
+				sha: isRevisionRange(rev) ? undefined : rev,
 				count: commits.size,
 				limit: limit,
 				hasMore: overrideHasMore ?? count - countStashChildCommits > commits.size,
@@ -579,8 +632,25 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 
 			return log;
 		} catch (ex) {
-			Logger.error(ex, scope);
 			if (isCancellationError(ex)) throw ex;
+
+			// Check if this is a "bad object" error due to a submodule's internal SHA
+			const pathspec = options?.path?.pathspec;
+			if (rev && pathspec && ex instanceof Error && GitErrors.badObject.test(ex.message)) {
+				const tree = await this.provider.revision.getTreeEntryForRevision(repoPath, 'HEAD', pathspec);
+				if (tree?.type === 'commit') {
+					// It's a submodule - retry without the rev and without rename tracking
+					return this.getLogCore(
+						repoPath,
+						undefined,
+						{ ...options, path: { ...options.path, pathspec: pathspec, renames: false } },
+						cancellation,
+						additionalArgs,
+					);
+				}
+			}
+
+			scope?.error(ex);
 			debugger;
 
 			return undefined;
@@ -616,7 +686,8 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 				return moreLog;
 			}
 
-			const lastCommit = last(log.commits.values());
+			// Stashes are not part of the normal commit history, so we need to find the last non-stash commit for the cursor
+			const lastCommit = findLast(log.commits.values(), c => !isStash(c)) ?? last(log.commits.values());
 			const sha = lastCommit?.ref;
 
 			// Check to make sure the filename hasn't changed and if it has use the previous
@@ -677,7 +748,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 					count: commits.size,
 					limit: moreUntil == null ? (log.limit ?? 0) + moreLimit : undefined,
 					hasMore: moreUntil == null ? moreLog.hasMore : true,
-					startingCursor: last(log.commits)?.[0],
+					startingCursor: sha,
 					endingCursor: moreLog.endingCursor,
 					pagedCommits: () => {
 						// Remove any duplicates
@@ -699,7 +770,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		};
 	}
 
-	@log()
+	@debug()
 	async getLogForPath(
 		repoPath: string | undefined,
 		pathOrUri: string | Uri,
@@ -709,7 +780,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 	): Promise<GitLog | undefined> {
 		if (repoPath == null) return undefined;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		let relativePath = this.provider.getRelativePath(pathOrUri, repoPath);
 
@@ -729,21 +800,32 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 			renames: options?.renames ?? configuration.get('advanced.fileHistoryFollowsRenames'),
 		};
 
+		let type: 'file' | 'folder' | 'submodule' = options.isFolder ? 'folder' : 'file';
 		if (isFolderGlob(relativePath)) {
 			relativePath = stripFolderGlob(relativePath);
 			options.isFolder = true;
+			type = 'folder';
 		} else if (options.isFolder == null) {
 			const tree = await this.provider.revision.getTreeEntryForRevision(repoPath, rev || 'HEAD', relativePath);
 			if (cancellation?.isCancellationRequested) throw new CancellationError();
 
-			options.isFolder = tree?.type === 'tree';
+			if (tree?.type === 'commit') {
+				// It's a submodule — line ranges and rename tracking don't apply, and the rev may reference
+				// the submodule's internal SHA which isn't valid in the parent repo
+				type = 'submodule';
+				options.range = undefined;
+				options.renames = false;
+				// rev = undefined;
+			} else {
+				type = tree?.type === 'tree' ? 'folder' : 'file';
+				options.isFolder = type === 'folder';
+			}
 		}
 
 		let cacheKey: string | undefined;
 		if (
-			this.useCaching &&
-			// Don't cache folders
-			!options.isFolder &&
+			// Only cache files
+			type === 'file' &&
 			options.authors == null &&
 			options.cursor == null &&
 			options.filters == null &&
@@ -778,7 +860,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 			if (doc.state != null) {
 				const cachedLog = doc.state.getLog(cacheKey);
 				if (cachedLog != null) {
-					Logger.debug(scope, `Cache hit: '${cacheKey}'`);
+					scope?.trace(`Cache hit: '${cacheKey}'`);
 					return cachedLog.item;
 				}
 
@@ -787,14 +869,14 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 					const cachedLog = doc.state.getLog(`log${options.renames ? ':follow' : ''}`);
 					if (cachedLog != null) {
 						if (rev == null) {
-							Logger.debug(scope, `Cache hit: ~'${cacheKey}'`);
+							scope?.trace(`Cache hit: ~'${cacheKey}'`);
 							return cachedLog.item;
 						}
 
-						Logger.debug(scope, `Cache ?: '${cacheKey}'`);
+						scope?.trace(`Cache ?: '${cacheKey}'`);
 						let log = await cachedLog.item;
 						if (log != null && !log.hasMore && log.commits.has(rev)) {
-							Logger.debug(scope, `Cache hit: '${cacheKey}'`);
+							scope?.trace(`Cache hit: '${cacheKey}'`);
 
 							// Create a copy of the log starting at the requested commit
 							let skip = true;
@@ -834,7 +916,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 				}
 			}
 
-			Logger.debug(scope, `Cache miss: '${cacheKey}'`);
+			scope?.trace(`Cache miss: '${cacheKey}'`);
 
 			doc.state ??= new GitDocumentState();
 		}
@@ -849,7 +931,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 					}
 
 					const msg: string = ex?.toString() ?? '';
-					Logger.debug(scope, `Cache replace (with empty promise): '${cacheKey}'`);
+					scope?.trace(`Cache replace (with empty promise): '${cacheKey}'`);
 
 					const value: CachedLog = {
 						item: emptyPromise as Promise<GitLog>,
@@ -867,7 +949,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		);
 
 		if (cacheKey && doc?.state != null) {
-			Logger.debug(scope, `Cache add: '${cacheKey}'`);
+			scope?.trace(`Cache add: '${cacheKey}'`);
 
 			const value: CachedLog = {
 				item: promise as Promise<GitLog>,
@@ -885,13 +967,13 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		options: GitLogForPathOptions,
 		cancellation?: CancellationToken,
 	): Promise<GitLog | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const paths = await this.provider.isTrackedWithDetails(path, repoPath, rev);
 		if (cancellation?.isCancellationRequested) throw new CancellationError();
 
 		if (paths == null) {
-			Logger.log(scope, `Skipping log; '${path}' is not tracked`);
+			scope?.debug(`Skipping log; '${path}' is not tracked`);
 			return emptyPromise as Promise<GitLog>;
 		}
 
@@ -922,90 +1004,111 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		return log;
 	}
 
-	@log()
+	@debug()
 	async getLogShas(
 		repoPath: string,
 		rev?: string | undefined,
 		options?: GitLogShasOptions,
 		cancellation?: CancellationToken,
 	): Promise<Iterable<string>> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
-		try {
-			const parser = getShaLogParser();
-			const args = [...parser.arguments];
+		options ??= {};
+		options.ordering ??= configuration.get('advanced.commitOrdering');
+		options.limit ??= configuration.get('advanced.maxListItems') ?? 0;
+		options.merges ??= true;
 
-			if (options?.all) {
-				args.push(`--all`);
-			}
+		const getCore = async (): Promise<string[]> => {
+			try {
+				const parser = getShaLogParser();
+				const args = [...parser.arguments];
 
-			const ordering = options?.ordering ?? configuration.get('advanced.commitOrdering');
-			if (ordering) {
-				args.push(`--${ordering}-order`);
-			}
-
-			const limit = options?.limit ?? configuration.get('advanced.maxListItems') ?? 0;
-			if (limit) {
-				args.push(`-n${limit}`);
-			}
-
-			if (options?.since) {
-				args.push(`--since="${options.since}"`);
-			}
-
-			const merges = options?.merges ?? true;
-			if (merges) {
-				args.push(merges === 'first-parent' ? '--first-parent' : '--no-min-parents');
-			} else {
-				args.push('--no-merges');
-			}
-
-			if (options?.authors?.length) {
-				if (!args.includes('--use-mailmap')) {
-					args.push('--use-mailmap');
+				if (options.all) {
+					args.push(`--all`);
 				}
-				args.push(...options.authors.map(a => `--author=^${a.name} <${a.email}>$`));
+
+				if (options.ordering) {
+					args.push(`--${options.ordering}-order`);
+				}
+
+				if (options.limit) {
+					args.push(`-n${options.limit}`);
+				}
+
+				if (options.since) {
+					args.push(`--since="${options.since}"`);
+				}
+
+				if (options.merges) {
+					args.push(options.merges === 'first-parent' ? '--first-parent' : '--no-min-parents');
+				} else {
+					args.push('--no-merges');
+				}
+
+				if (options.reverse) {
+					args.push('--reverse');
+				}
+
+				if (options.authors?.length) {
+					if (!args.includes('--use-mailmap')) {
+						args.push('--use-mailmap');
+					}
+					args.push(...options.authors.map(a => `--author=^${a.name} <${a.email}>$`));
+				}
+
+				const pathspec =
+					options.pathOrUri != null ? this.provider.getRelativePath(options.pathOrUri, repoPath) : undefined;
+				if (pathspec) {
+					const similarityThreshold = configuration.get('advanced.similarityThreshold');
+					args.push(`-M${similarityThreshold == null ? '' : `${similarityThreshold}%`}`);
+				}
+
+				if (rev && !isUncommittedStaged(rev)) {
+					args.push(rev);
+				}
+
+				args.push('--');
+
+				if (pathspec) {
+					args.push(pathspec);
+				}
+
+				const result = await this.git.exec(
+					{ cwd: repoPath, cancellation: cancellation, configs: gitConfigsLog },
+					'log',
+					...args,
+				);
+				return [...parser.parse(result.stdout)];
+			} catch (ex) {
+				scope?.error(ex);
+				if (isCancellationError(ex)) throw ex;
+				debugger;
+
+				return [];
 			}
+		};
 
-			const pathspec =
-				options?.pathOrUri != null ? this.provider.getRelativePath(options.pathOrUri, repoPath) : undefined;
-			if (pathspec) {
-				const similarityThreshold = configuration.get('advanced.similarityThreshold');
-				args.push(`-M${similarityThreshold == null ? '' : `${similarityThreshold}%`}`);
-			}
+		// Cache simple queries (no pathspec, no authors) as these are on hot paths (e.g. getting unpublished commits)
+		const cacheable = !options.pathOrUri && !options.authors?.length && !options.reverse && !options.all;
 
-			if (rev && !isUncommittedStaged(rev)) {
-				args.push(rev);
-			}
-
-			args.push('--');
-
-			if (pathspec) {
-				args.push(pathspec);
-			}
-
-			const result = await this.git.exec(
-				{ cwd: repoPath, cancellation: cancellation, configs: gitConfigsLog },
-				'log',
-				...args,
+		if (cacheable) {
+			return this.cache.logShas.getOrCreate(
+				repoPath,
+				`${rev ?? ''}:${options.ordering ?? ''}:${options.limit}:${options.merges}:${options.since ?? ''}`,
+				() => getCore(),
 			);
-			return parser.parse(result.stdout);
-		} catch (ex) {
-			Logger.error(ex, scope);
-			if (isCancellationError(ex)) throw ex;
-			debugger;
-
-			return [];
 		}
+
+		return getCore();
 	}
 
-	@log()
+	@debug()
 	async getOldestUnpushedShaForPath(
 		repoPath: string,
 		pathOrUri: string | Uri,
 		cancellation?: CancellationToken,
 	): Promise<string | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const relativePath = this.provider.getRelativePath(pathOrUri, repoPath);
@@ -1030,7 +1133,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 			);
 			return first(parser.parse(result.stdout));
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			if (isCancellationError(ex)) throw ex;
 			debugger;
 
@@ -1038,14 +1141,14 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		}
 	}
 
-	@log()
+	@debug()
 	async hasCommitBeenPushed(repoPath: string, rev: string, cancellation?: CancellationToken): Promise<boolean> {
 		if (repoPath == null) return false;
 
 		return this.isAncestorOf(repoPath, rev, '@{u}', cancellation);
 	}
 
-	@log()
+	@debug()
 	async isAncestorOf(
 		repoPath: string,
 		rev1: string,
@@ -1064,13 +1167,13 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		return result.exitCode === 0;
 	}
 
-	@log<CommitsGitSubProvider['searchCommits']>({
-		args: {
-			1: s =>
-				`[${s.matchAll ? 'A' : ''}${s.matchCase ? 'C' : ''}${s.matchRegex ? 'R' : ''}${s.matchWholeWord ? 'W' : ''}]: ${
-					s.query.length > 500 ? `${s.query.substring(0, 500)}...` : s.query
-				}`,
-		},
+	@debug({
+		args: (repoPath, s) => ({
+			repoPath: repoPath,
+			search: `[${s.matchAll ? 'A' : ''}${s.matchCase ? 'C' : ''}${s.matchRegex ? 'R' : ''}${
+				s.matchWholeWord ? 'W' : ''
+			}]: ${s.query.length > 500 ? `${s.query.substring(0, 500)}...` : s.query}`,
+		}),
 	})
 	async searchCommits(
 		repoPath: string,
@@ -1079,7 +1182,7 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 		options?: GitSearchCommitsOptions,
 		cancellation?: CancellationToken,
 	): Promise<SearchCommitsResult> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		search = { matchAll: false, matchCase: false, matchRegex: true, matchWholeWord: false, ...search };
 		if (
@@ -1098,13 +1201,12 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 			const similarityThreshold = configuration.get('advanced.similarityThreshold');
 			const args = [
 				'log',
-
 				...parser.arguments,
 				`-M${similarityThreshold == null ? '' : `${similarityThreshold}%`}`,
 				'--use-mailmap',
 			];
 
-			const { args: searchArgs, files, shas, filters } = parseSearchQueryCommand(search, currentUser);
+			const { args: searchArgs, files, shas, filters } = parseSearchQueryGitCommand(search, currentUser);
 
 			let stashes: Map<string, GitStashCommit> | undefined;
 			let stdin: string | undefined;
@@ -1112,7 +1214,8 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 			if (shas?.size) {
 				stdin = join(shas, '\n');
 				args.push('--no-walk');
-			} else {
+			} else if (!filters.refs) {
+				// Don't include stashes when using ref: filter, as they would add unrelated commits
 				// TODO@eamodio this is insanity -- there *HAS* to be a better way to get git log to return stashes
 				({ stdin, stashes } = convertStashesToStdin(
 					await this.provider.stash?.getStash(repoPath, undefined, cancellation),
@@ -1225,10 +1328,59 @@ export class CommitsGitSubProvider implements GitCommitsSubProvider {
 
 			return { search: search, log: log };
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			if (isCancellationError(ex)) throw ex;
 
 			return { search: search, log: undefined };
+		}
+	}
+
+	@debug()
+	async getCommitSignature(repoPath: string, sha: string): Promise<CommitSignature | undefined> {
+		const scope = getScopedLogger();
+
+		try {
+			const result = await this.git.exec(
+				{
+					cwd: repoPath,
+					errors: 'ignore',
+					caching: { cache: this.cache.gitResults, options: { accessTTL: 60 * 1000 } },
+					configs: gitConfigsLog,
+				},
+				'log',
+				`--format=${signatureFormat}`,
+				'-1',
+				sha,
+			);
+
+			if (!result.stdout) return undefined;
+
+			return parseSignatureOutput(result.stdout);
+		} catch (ex) {
+			scope?.error(ex);
+			return undefined;
+		}
+	}
+
+	@debug()
+	async isCommitSigned(repoPath: string, sha: string): Promise<boolean> {
+		const scope = getScopedLogger();
+
+		try {
+			const result = await this.git.exec(
+				{
+					cwd: repoPath,
+					errors: 'ignore',
+					caching: { cache: this.cache.gitResults, options: { accessTTL: 60 * 1000 } },
+				},
+				'cat-file',
+				'commit',
+				sha,
+			);
+			return /^gpgsig(-sha256)? /m.test(result.stdout);
+		} catch (ex) {
+			scope?.error(ex);
+			return false;
 		}
 	}
 }
@@ -1269,7 +1421,7 @@ function createCommit(
 
 export function createCommitFileset(
 	container: Container,
-	c: ParsedCommit | ParsedStash,
+	c: ParsedCommit | ParsedStash | ParsedStashWithFiles,
 	repoPath: string,
 	pathspec: string | undefined,
 ): GitCommitFileset {
@@ -1293,6 +1445,8 @@ export function createCommitFileset(
 				{ additions: f.additions ?? 0, deletions: f.deletions ?? 0, changes: 0 },
 				undefined,
 				f.range ? { startLine: f.range.startLine, endLine: f.range.endLine } : undefined,
+				f.mode,
+				f.oid ? { oid: f.oid, previousOid: f.previousOid } : undefined,
 			),
 	);
 
@@ -1311,7 +1465,7 @@ function getGitStartEnd(range: Range): [number, number] {
 async function parseCommits(
 	container: Container,
 	parser: CommitsLogParser | CommitsWithFilesLogParser | CommitsInFileRangeLogParser,
-	resultOrStream: Promise<GitResult<string>> | AsyncGenerator<string>,
+	resultOrStream: Promise<GitResult> | AsyncGenerator<string>,
 	repoPath: string,
 	pathspec: string | undefined,
 	limit: number | undefined,
@@ -1323,14 +1477,21 @@ async function parseCommits(
 	let countStashChildCommits = 0;
 	const commits = new Map<string, GitCommit>();
 
+	const tipsOnly = searchFilters?.type === 'tip';
+
 	if (resultOrStream instanceof Promise) {
+		const scope = getScopedLogger();
 		const result = await resultOrStream;
+
+		using sw = maybeStopWatch(scope, { log: { onlyExit: true, level: 'debug' } });
 
 		if (stashes?.size) {
 			const allowFilteredFiles = searchFilters?.files ?? false;
 			const stashesOnly = searchFilters?.type === 'stash';
+
 			for (const c of parser.parse(result.stdout)) {
 				if (stashesOnly && !stashes?.has(c.sha)) continue;
+				if (tipsOnly && !c.tips) continue;
 
 				count++;
 				if (limit && count > limit) break;
@@ -1360,6 +1521,8 @@ async function parseCommits(
 			}
 		} else {
 			for (const c of parser.parse(result.stdout)) {
+				if (tipsOnly && !c.tips) continue;
+
 				count++;
 				if (limit && count > limit) break;
 
@@ -1367,14 +1530,20 @@ async function parseCommits(
 			}
 		}
 
+		sw?.stop({ suffix: ` created ${count} commits` });
+
 		return { commits: commits, count: count, countStashChildCommits: countStashChildCommits };
 	}
+
+	using _streamDisposer = createDisposable(() => void resultOrStream.return?.(undefined));
 
 	if (stashes?.size) {
 		const allowFilteredFiles = searchFilters?.files ?? false;
 		const stashesOnly = searchFilters?.type === 'stash';
+
 		for await (const c of parser.parseAsync(resultOrStream)) {
 			if (stashesOnly && !stashes?.has(c.sha)) continue;
+			if (tipsOnly && !c.tips) continue;
 
 			count++;
 			if (limit && count > limit) break;
@@ -1404,6 +1573,8 @@ async function parseCommits(
 		}
 	} else {
 		for await (const c of parser.parseAsync(resultOrStream)) {
+			if (tipsOnly && !c.tips) continue;
+
 			count++;
 			if (limit && count > limit) break;
 

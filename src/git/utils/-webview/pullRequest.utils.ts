@@ -1,14 +1,15 @@
 import type { ProgressOptions } from 'vscode';
 import { ProgressLocation, Uri, window } from 'vscode';
-import { Schemes } from '../../../constants';
-import type { Source } from '../../../constants.telemetry';
-import type { Container } from '../../../container';
-import type { LeftRightCommitCountResult } from '../../gitProvider';
-import type { PullRequest, PullRequestComparisonRefs } from '../../models/pullRequest';
-import type { CreatePullRequestRemoteResource } from '../../models/remoteResource';
-import type { Repository } from '../../models/repository';
-import { getComparisonRefsForPullRequest, getRepositoryIdentityForPullRequest } from '../pullRequest.utils';
-import { createRevisionRange } from '../revision.utils';
+import { Schemes } from '../../../constants.js';
+import type { Source } from '../../../constants.telemetry.js';
+import type { Container } from '../../../container.js';
+import type { LeftRightCommitCountResult } from '../../gitProvider.js';
+import type { PullRequest, PullRequestComparisonRefs } from '../../models/pullRequest.js';
+import type { CreatePullRequestRemoteResource } from '../../models/remoteResource.js';
+import type { Repository } from '../../models/repository.js';
+import { gitSuffixRegex } from '../../parsers/remoteParser.js';
+import { getComparisonRefsForPullRequest, getRepositoryIdentityForPullRequest } from '../pullRequest.utils.js';
+import { createRevisionRange } from '../revision.utils.js';
 
 export async function describePullRequestWithAI(
 	container: Container,
@@ -29,7 +30,7 @@ export async function describePullRequestWithAI(
 	}
 
 	try {
-		const result = await container.ai.generateCreatePullRequest(
+		const result = await container.ai.actions.generateCreatePullRequest(
 			repo,
 			`${base.remote.name}/${base.branch}`,
 			`${head.remote.name}/${head.branch}`,
@@ -41,7 +42,7 @@ export async function describePullRequestWithAI(
 		);
 		if (result === 'cancelled') return undefined;
 
-		return result?.parsed ? { title: result.parsed.summary, description: result.parsed.body } : undefined;
+		return result?.result ? { title: result.result.summary, description: result.result.body } : undefined;
 	} catch (ex) {
 		void window.showErrorMessage(ex.message);
 		return undefined;
@@ -77,7 +78,7 @@ export async function ensurePullRequestRemote(
 	const identity = getRepositoryIdentityForPullRequest(pr);
 	if (identity.remote.url == null) return false;
 
-	const prRemoteUrl = identity.remote.url.replace(/\.git$/, '');
+	const prRemoteUrl = identity.remote.url.replace(gitSuffixRegex, '');
 
 	let found = false;
 	for (const remote of await repo.git.remotes.getRemotes()) {

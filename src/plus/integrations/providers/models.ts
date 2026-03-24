@@ -19,6 +19,9 @@ import type {
 	Jira,
 	JiraProject,
 	JiraResource,
+	Linear,
+	LinearOrganization,
+	LinearTeam,
 	NumberedPageInput,
 	Issue as ProviderApiIssue,
 	PullRequestWithUniqueID,
@@ -36,34 +39,35 @@ import {
 } from '@gitkraken/provider-apis';
 import { EntityIdentifierUtils } from '@gitkraken/provider-apis/entity-identifiers';
 import { GitProviderUtils } from '@gitkraken/provider-apis/provider-utils';
-import type { IntegrationIds } from '../../../constants.integrations';
+import type { IntegrationIds } from '../../../constants.integrations.js';
 import {
 	GitCloudHostIntegrationId,
 	GitSelfManagedHostIntegrationId,
 	IssuesCloudHostIntegrationId,
-} from '../../../constants.integrations';
-import type { Account as UserAccount } from '../../../git/models/author';
-import type { IssueMember, IssueProject, IssueShape } from '../../../git/models/issue';
-import { Issue, RepositoryAccessLevel } from '../../../git/models/issue';
+} from '../../../constants.integrations.js';
+import type { Account as UserAccount } from '../../../git/models/author.js';
+import type { IssueMember, IssueProject, IssueShape } from '../../../git/models/issue.js';
+import { Issue, RepositoryAccessLevel } from '../../../git/models/issue.js';
 import type {
 	PullRequestMember,
 	PullRequestRefs,
 	PullRequestRepositoryIdentityDescriptor,
 	PullRequestReviewer,
 	PullRequestState,
-} from '../../../git/models/pullRequest';
+} from '../../../git/models/pullRequest.js';
 import {
 	PullRequest,
 	PullRequestMergeableState,
 	PullRequestReviewDecision,
 	PullRequestReviewState,
 	PullRequestStatusCheckRollupState,
-} from '../../../git/models/pullRequest';
-import type { Provider, ProviderReference } from '../../../git/models/remoteProvider';
-import { equalsIgnoreCase } from '../../../system/string';
-import type { EnrichableItem } from '../../launchpad/models/enrichedItem';
-import type { Integration, IntegrationType } from '../models/integration';
-import { getEntityIdentifierInput } from './utils';
+} from '../../../git/models/pullRequest.js';
+import type { Provider, ProviderReference } from '../../../git/models/remoteProvider.js';
+import { gitSuffixRegex } from '../../../git/parsers/remoteParser.js';
+import { equalsIgnoreCase } from '../../../system/string.js';
+import type { EnrichableItem } from '../../launchpad/models/enrichedItem.js';
+import type { Integration, IntegrationType } from '../models/integration.js';
+import { getEntityIdentifierInput } from './utils.js';
 
 export type ProviderAccount = Account;
 export type ProviderReposInput = (string | number)[] | GetRepoInput[];
@@ -74,6 +78,8 @@ export type ProviderIssue = ProviderApiIssue;
 export type ProviderEnterpriseOptions = EnterpriseOptions;
 export type ProviderJiraProject = JiraProject;
 export type ProviderJiraResource = JiraResource;
+export type ProviderLinearTeam = LinearTeam;
+export type ProviderLinearOrganization = LinearOrganization;
 export type ProviderAzureProject = AzureProject;
 export type ProviderAzureResource = AzureOrganization;
 export type ProviderBitbucketResource = BitbucketWorkspaceStub;
@@ -280,6 +286,11 @@ export type GetIssuesForReposFn = (
 	options?: EnterpriseOptions,
 ) => Promise<{ data: ProviderIssue[]; pageInfo?: PageInfo }>;
 
+export type GetIssuesForCurrentUserFn = (
+	input: PagingInput,
+	options?: EnterpriseOptions,
+) => Promise<{ data: ProviderIssue[]; pageInfo?: PageInfo }>;
+
 export type GetIssuesForRepoFn = (
 	input: GetIssuesForRepoInput & PagingInput,
 	options?: EnterpriseOptions,
@@ -309,6 +320,8 @@ export type GetCurrentUserForResourceFn = (
 ) => Promise<{ data: ProviderAccount }>;
 
 export type GetJiraResourcesForCurrentUserFn = (options?: EnterpriseOptions) => Promise<{ data: JiraResource[] }>;
+export type GetLinearOrganizationFn = (options?: EnterpriseOptions) => Promise<{ data: LinearOrganization }>;
+export type GetLinearTeamsForCurrentUserFn = (options?: EnterpriseOptions) => Promise<{ data: LinearTeam[] }>;
 export type GetJiraProjectsForResourcesFn = (
 	input: { resourceIds: string[] },
 	options?: EnterpriseOptions,
@@ -321,8 +334,8 @@ export type GetAzureProjectsForResourceFn = (
 	input: { namespace: string; cursor?: string },
 	options?: EnterpriseOptions,
 ) => Promise<{ data: AzureProject[]; pageInfo?: PageInfo }>;
-export type GetBitbucketResourcesForUserFn = (
-	input: { userId: string },
+export type GetBitbucketResourcesForCurrentUserFn = (
+	input: Record<string, never>,
 	options?: EnterpriseOptions,
 ) => Promise<{ data: BitbucketWorkspaceStub[] }>;
 export type GetBitbucketPullRequestsAuthoredByUserForWorkspaceFn = (
@@ -355,7 +368,7 @@ export type GetIssuesForResourceForCurrentUserFn = (
 ) => Promise<{ data: ProviderIssue[] }>;
 
 export interface ProviderInfo extends ProviderMetadata {
-	provider: GitHub | GitLab | Bitbucket | BitbucketServer | Jira | Trello | AzureDevOps;
+	provider: GitHub | GitLab | Bitbucket | BitbucketServer | Jira | Linear | Trello | AzureDevOps;
 	getRepoFn?: GetRepoFn;
 	getRepoOfProjectFn?: GetRepoOfProjectFn;
 	getPullRequestsForReposFn?: GetPullRequestsForReposFn;
@@ -364,14 +377,17 @@ export interface ProviderInfo extends ProviderMetadata {
 	getPullRequestsForAzureProjectsFn?: GetPullRequestsForAzureProjectsFn;
 	getIssueFn?: GetIssueFn;
 	getIssuesForReposFn?: GetIssuesForReposFn;
+	getIssuesForCurrentUserFn?: GetIssuesForCurrentUserFn;
 	getIssuesForRepoFn?: GetIssuesForRepoFn;
 	getIssuesForAzureProjectFn?: GetIssuesForAzureProjectFn;
 	getCurrentUserFn?: GetCurrentUserFn;
 	getCurrentUserForInstanceFn?: GetCurrentUserForInstanceFn;
 	getCurrentUserForResourceFn?: GetCurrentUserForResourceFn;
 	getJiraResourcesForCurrentUserFn?: GetJiraResourcesForCurrentUserFn;
+	getLinearOrganizationFn?: GetLinearOrganizationFn;
+	getLinearTeamsForCurrentUserFn?: GetLinearTeamsForCurrentUserFn;
 	getAzureResourcesForUserFn?: GetAzureResourcesForUserFn;
-	getBitbucketResourcesForUserFn?: GetBitbucketResourcesForUserFn;
+	getBitbucketResourcesForCurrentUserFn?: GetBitbucketResourcesForCurrentUserFn;
 	getBitbucketPullRequestsAuthoredByUserForWorkspaceFn?: GetBitbucketPullRequestsAuthoredByUserForWorkspaceFn;
 	getBitbucketServerPullRequestsForCurrentUserFn?: GetBitbucketServerPullRequestsForCurrentUserFn;
 	getJiraProjectsForResourcesFn?: GetJiraProjectsForResourcesFn;
@@ -544,6 +560,20 @@ export const providersMetadata: ProvidersMetadata = {
 		supportedIssueFilters: [IssueFilter.Author, IssueFilter.Assignee, IssueFilter.Mention],
 		scopes: ['vso.code', 'vso.identity', 'vso.project', 'vso.profile', 'vso.work'],
 	},
+	[GitSelfManagedHostIntegrationId.AzureDevOpsServer]: {
+		domain: '',
+		id: GitSelfManagedHostIntegrationId.AzureDevOpsServer,
+		name: 'Azure DevOps Server',
+		type: 'git',
+		iconKey: GitCloudHostIntegrationId.AzureDevOps,
+		issuesPagingMode: PagingMode.Project,
+		pullRequestsPagingMode: PagingMode.Repo,
+		// Use 'id' property on account for PR filters
+		supportedPullRequestFilters: [PullRequestFilter.Author, PullRequestFilter.Assignee],
+		// Use 'name' property on account for issue filters
+		supportedIssueFilters: [IssueFilter.Author, IssueFilter.Assignee, IssueFilter.Mention],
+		scopes: ['vso.code', 'vso.identity', 'vso.project', 'vso.profile', 'vso.work'],
+	},
 	[IssuesCloudHostIntegrationId.Jira]: {
 		domain: 'atlassian.net',
 		id: IssuesCloudHostIntegrationId.Jira,
@@ -587,6 +617,14 @@ export const providersMetadata: ProvidersMetadata = {
 			'read:project-version:jira',
 		],
 		supportedIssueFilters: [IssueFilter.Author, IssueFilter.Assignee, IssueFilter.Mention],
+	},
+	[IssuesCloudHostIntegrationId.Linear]: {
+		domain: 'linear.app',
+		id: IssuesCloudHostIntegrationId.Linear,
+		name: 'Linear',
+		type: 'issues',
+		iconKey: IssuesCloudHostIntegrationId.Linear,
+		scopes: [],
 	},
 	[IssuesCloudHostIntegrationId.Trello]: {
 		domain: 'trello.com',
@@ -827,6 +865,7 @@ export function toProviderPullRequest(pr: PullRequest): ProviderPullRequest {
 		graphQLId: pr.nodeId,
 		number: Number.parseInt(pr.id, 10),
 		title: pr.title,
+		description: null,
 		url: pr.url,
 		state: toProviderPullRequestState(pr.state),
 		isDraft: pr.isDraft ?? false,
@@ -956,7 +995,7 @@ export function fromProviderPullRequest(
 				owner: pr.repository.owner.login,
 				exists: pr.baseRef != null,
 				url: pr.repository.remoteInfo?.cloneUrlHTTPS
-					? pr.repository.remoteInfo.cloneUrlHTTPS.replace(/\.git$/, '')
+					? pr.repository.remoteInfo.cloneUrlHTTPS.replace(gitSuffixRegex, '')
 					: '',
 			},
 			head: {
@@ -966,7 +1005,7 @@ export function fromProviderPullRequest(
 				owner: pr.headRepository?.owner.login ?? '',
 				exists: pr.headRef != null,
 				url: pr.headRepository?.remoteInfo?.cloneUrlHTTPS
-					? pr.headRepository.remoteInfo.cloneUrlHTTPS.replace(/\.git$/, '')
+					? pr.headRepository.remoteInfo.cloneUrlHTTPS.replace(gitSuffixRegex, '')
 					: '',
 			},
 			isCrossRepository: pr.headRepository?.id !== pr.repository.id,
@@ -1026,6 +1065,7 @@ export function fromProviderIssue(
 						resourceName: issue.project.namespace,
 					}
 				: undefined,
+		issue.number,
 	);
 }
 

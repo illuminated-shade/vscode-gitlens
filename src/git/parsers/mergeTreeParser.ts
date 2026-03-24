@@ -1,7 +1,7 @@
-import { map } from '../../system/iterable';
-import { maybeStopWatch } from '../../system/stopwatch';
-import { iterateByDelimiter } from '../../system/string';
-import type { MergeConflictFile } from '../models/mergeConflict';
+import { map } from '../../system/iterable.js';
+import { maybeStopWatch } from '../../system/stopwatch.js';
+import { iterateByDelimiter } from '../../system/string.js';
+import type { MergeConflictFile } from '../models/mergeConflicts.js';
 
 export interface GitMergeConflict {
 	treeOid: string;
@@ -9,7 +9,7 @@ export interface GitMergeConflict {
 }
 
 export function parseMergeTreeConflict(data: string): GitMergeConflict {
-	using sw = maybeStopWatch(`Git.parseMergeTreeConflict`, { log: false, logLevel: 'debug' });
+	using sw = maybeStopWatch(`Git.parseMergeTreeConflict`, { log: { onlyExit: true, level: 'debug' } });
 
 	const lines = iterateByDelimiter(data, '\0');
 	const treeOid = lines.next();

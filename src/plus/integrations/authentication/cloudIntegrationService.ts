@@ -1,10 +1,9 @@
-import type { IntegrationIds } from '../../../constants.integrations';
-import type { Container } from '../../../container';
-import { Logger } from '../../../system/logger';
-import { getLogScope } from '../../../system/logger.scope';
-import type { ServerConnection } from '../../gk/serverConnection';
-import type { CloudIntegrationAuthenticationSession, CloudIntegrationConnection } from './models';
-import { toCloudIntegrationType } from './models';
+import type { IntegrationIds } from '../../../constants.integrations.js';
+import type { Container } from '../../../container.js';
+import { getScopedLogger } from '../../../system/logger.scope.js';
+import type { ServerConnection } from '../../gk/serverConnection.js';
+import type { CloudIntegrationAuthenticationSession, CloudIntegrationConnection } from './models.js';
+import { toCloudIntegrationType } from './models.js';
 
 export class CloudIntegrationService {
 	constructor(
@@ -13,7 +12,7 @@ export class CloudIntegrationService {
 	) {}
 
 	async getConnections(): Promise<CloudIntegrationConnection[] | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const providersRsp = await this.connection.fetchGkApi(
 			'v1/provider-tokens',
@@ -25,7 +24,7 @@ export class CloudIntegrationService {
 			const errorMessage =
 				typeof error === 'string' ? error : ((error?.message as string) ?? providersRsp.statusText);
 			if (error != null) {
-				Logger.error(undefined, scope, `Failed to get connected providers from cloud: ${errorMessage}`);
+				scope?.error(undefined, `Failed to get connected providers from cloud: ${errorMessage}`);
 			}
 			if (this.container.telemetry.enabled) {
 				this.container.telemetry.sendEvent('cloudIntegrations/getConnections/failed', {
@@ -42,12 +41,12 @@ export class CloudIntegrationService {
 		id: IntegrationIds,
 		refreshToken?: string,
 	): Promise<CloudIntegrationAuthenticationSession | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const refresh = Boolean(refreshToken);
 		const cloudIntegrationType = toCloudIntegrationType[id];
 		if (cloudIntegrationType == null) {
-			Logger.error(undefined, scope, `Unsupported cloud integration type: ${id}`);
+			scope?.error(undefined, `Unsupported cloud integration type: ${id}`);
 			return undefined;
 		}
 		const reqInitOptions = refreshToken
@@ -69,9 +68,8 @@ export class CloudIntegrationService {
 			const errorMessage =
 				typeof error === 'string' ? error : ((error?.message as string) ?? tokenRsp.statusText);
 			if (error != null) {
-				Logger.error(
+				scope?.error(
 					undefined,
-					scope,
 					`Failed to ${refresh ? 'refresh' : 'get'} ${id} token from cloud: ${errorMessage}`,
 				);
 			}
@@ -88,7 +86,7 @@ export class CloudIntegrationService {
 			}
 
 			if (refresh) {
-				// try once to just get the lastest token if the refresh fails, and give up if that fails too
+				// try once to just get the latest token if the refresh fails, and give up if that fails too
 				const newTokenRsp = await this.connection.fetchGkApi(
 					`v1/provider-tokens/${cloudIntegrationType}`,
 					{ method: 'GET' },
@@ -108,11 +106,11 @@ export class CloudIntegrationService {
 	}
 
 	async disconnect(id: IntegrationIds): Promise<boolean> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const cloudIntegrationType = toCloudIntegrationType[id];
 		if (cloudIntegrationType == null) {
-			Logger.error(undefined, scope, `Unsupported cloud integration type: ${id}`);
+			scope?.error(undefined, `Unsupported cloud integration type: ${id}`);
 			return false;
 		}
 
@@ -126,7 +124,7 @@ export class CloudIntegrationService {
 			const errorMessage =
 				typeof error === 'string' ? error : ((error?.message as string) ?? tokenRsp.statusText);
 			if (error != null) {
-				Logger.error(undefined, scope, `Failed to disconnect ${id} token from cloud: ${errorMessage}`);
+				scope?.error(undefined, `Failed to disconnect ${id} token from cloud: ${errorMessage}`);
 			}
 			if (this.container.telemetry.enabled) {
 				this.container.telemetry.sendEvent('cloudIntegrations/disconnect/failed', {

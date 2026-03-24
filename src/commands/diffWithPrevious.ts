@@ -1,18 +1,18 @@
 import type { TextDocumentShowOptions, TextEditor, Uri } from 'vscode';
-import type { Container } from '../container';
-import type { DiffRange } from '../git/gitProvider';
-import { GitUri } from '../git/gitUri';
-import type { GitCommit } from '../git/models/commit';
-import { deletedOrMissing } from '../git/models/revision';
-import { showCommitHasNoPreviousCommitWarningMessage, showGenericErrorMessage } from '../messages';
-import { command, executeCommand } from '../system/-webview/command';
-import { getOrOpenTextEditor, selectionToDiffRange } from '../system/-webview/vscode/editors';
-import { getTabUris, getVisibleTabs } from '../system/-webview/vscode/tabs';
-import { Logger } from '../system/logger';
-import { areUrisEqual } from '../system/uri';
-import { ActiveEditorCommand } from './commandBase';
-import { getCommandUri } from './commandBase.utils';
-import type { DiffWithCommandArgs } from './diffWith';
+import type { Container } from '../container.js';
+import type { DiffRange } from '../git/gitProvider.js';
+import { GitUri } from '../git/gitUri.js';
+import type { GitCommit } from '../git/models/commit.js';
+import { deletedOrMissing } from '../git/models/revision.js';
+import { showCommitHasNoPreviousCommitWarningMessage, showGenericErrorMessage } from '../messages.js';
+import { command, executeCommand } from '../system/-webview/command.js';
+import { getOrOpenTextEditor, selectionToDiffRange } from '../system/-webview/vscode/editors.js';
+import { getTabUris, getVisibleTabs } from '../system/-webview/vscode/tabs.js';
+import { Logger } from '../system/logger.js';
+import { areUrisEqual } from '../system/uri.js';
+import { ActiveEditorCommand } from './commandBase.js';
+import { getCommandUri } from './commandBase.utils.js';
+import type { DiffWithCommandArgs } from './diffWith.js';
 
 export interface DiffWithPreviousCommandArgs {
 	commit?: GitCommit;
@@ -25,14 +25,23 @@ export interface DiffWithPreviousCommandArgs {
 @command()
 export class DiffWithPreviousCommand extends ActiveEditorCommand {
 	constructor(private readonly container: Container) {
-		super('gitlens.diffWithPrevious');
+		super([
+			'gitlens.diffWithPrevious',
+			'gitlens.diffWithPrevious:codelens',
+			'gitlens.diffWithPrevious:command',
+			'gitlens.diffWithPrevious:editor',
+			'gitlens.diffWithPrevious:editor/title',
+			'gitlens.diffWithPrevious:explorer',
+			'gitlens.diffWithPrevious:key',
+			'gitlens.diffWithPrevious:views',
+		]);
 	}
 
 	async execute(editor?: TextEditor, uri?: Uri, args?: DiffWithPreviousCommandArgs): Promise<void> {
 		args = { ...args };
 		if (args.uri == null) {
 			uri = getCommandUri(uri, editor);
-			if (uri == null) return;
+			if (uri == null && args.commit == null) return;
 		} else {
 			uri = args.uri;
 		}
@@ -61,6 +70,8 @@ export class DiffWithPreviousCommand extends ActiveEditorCommand {
 
 			gitUri = args.commit?.getGitUri();
 		} else {
+			if (uri == null) return;
+
 			gitUri = await GitUri.fromUri(uri);
 		}
 
@@ -72,7 +83,7 @@ export class DiffWithPreviousCommand extends ActiveEditorCommand {
 		let isInRightSideOfDiffEditor = false;
 		let isDirty = false;
 
-		if (args.commit == null) {
+		if (args.commit == null && uri != null) {
 			// Figure out if we are in a diff editor and if so, which side
 			const [tab] = getVisibleTabs(uri);
 			if (tab != null) {
@@ -127,8 +138,8 @@ export class DiffWithPreviousCommand extends ActiveEditorCommand {
 
 			void (await executeCommand<DiffWithCommandArgs>('gitlens.diffWith', {
 				repoPath: diffUris.current.repoPath,
-				lhs: { sha: diffUris.previous.sha ?? '', uri: diffUris.previous.documentUri() },
-				rhs: { sha: diffUris.current.sha ?? '', uri: diffUris.current.documentUri() },
+				lhs: { sha: diffUris.previous.sha ?? '', uri: diffUris.previous.documentUri },
+				rhs: { sha: diffUris.current.sha ?? '', uri: diffUris.current.documentUri },
 				range: args.range,
 				showOptions: args.showOptions,
 			}));

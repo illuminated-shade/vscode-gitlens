@@ -1,18 +1,18 @@
 import { Disposable, TreeItem, TreeItemCollapsibleState } from 'vscode';
-import { GitUri } from '../../git/gitUri';
-import type { GitLog } from '../../git/models/log';
-import { isPullRequest } from '../../git/models/pullRequest';
-import { debug } from '../../system/decorators/log';
-import { weakEvent } from '../../system/event';
-import { debounce } from '../../system/function/debounce';
-import { getSettledValue, pauseOnCancelOrTimeoutMapTuple } from '../../system/promise';
-import type { ViewsWithCommits } from '../viewBase';
-import { SubscribeableViewNode } from './abstract/subscribeableViewNode';
-import type { PageableViewNode, ViewNode } from './abstract/viewNode';
-import { ContextValues, getViewNodeId } from './abstract/viewNode';
-import { AutolinkedItemNode } from './autolinkedItemNode';
-import { LoadMoreNode, MessageNode } from './common';
-import { PullRequestNode } from './pullRequestNode';
+import { GitUri } from '../../git/gitUri.js';
+import type { GitLog } from '../../git/models/log.js';
+import { isPullRequest } from '../../git/models/pullRequest.js';
+import { trace } from '../../system/decorators/log.js';
+import { weakEvent } from '../../system/event.js';
+import { debounce } from '../../system/function/debounce.js';
+import { getSettledValue, pauseOnCancelOrTimeoutMapTuple } from '../../system/promise.js';
+import type { ViewsWithCommits } from '../viewBase.js';
+import { SubscribeableViewNode } from './abstract/subscribeableViewNode.js';
+import type { PageableViewNode, ViewNode } from './abstract/viewNode.js';
+import { ContextValues, getViewNodeId } from './abstract/viewNode.js';
+import { AutolinkedItemNode } from './autolinkedItemNode.js';
+import { LoadMoreNode, MessageNode } from './common.js';
+import { PullRequestNode } from './pullRequestNode.js';
 
 export class AutolinkedItemsNode extends SubscribeableViewNode<'autolinks', ViewsWithCommits> {
 	constructor(
@@ -35,7 +35,7 @@ export class AutolinkedItemsNode extends SubscribeableViewNode<'autolinks', View
 		return this._uniqueId;
 	}
 
-	@debug()
+	@trace()
 	protected override subscribe(): Disposable | Promise<Disposable | undefined> | undefined {
 		return Disposable.from(
 			weakEvent(
@@ -80,7 +80,7 @@ export class AutolinkedItemsNode extends SubscribeableViewNode<'autolinks', View
 				// }
 
 				if (enrichedAutolinks?.size) {
-					children = [...enrichedAutolinks.values()].map(([issueOrPullRequest, autolink]) =>
+					children = Array.from(enrichedAutolinks.values(), ([issueOrPullRequest, autolink]) =>
 						issueOrPullRequest != null && isPullRequest(issueOrPullRequest?.value)
 							? new PullRequestNode(this.view, this, issueOrPullRequest.value, this.log.repoPath)
 							: new AutolinkedItemNode(
@@ -100,7 +100,7 @@ export class AutolinkedItemsNode extends SubscribeableViewNode<'autolinks', View
 
 			if (this.log.hasMore) {
 				children.push(
-					new LoadMoreNode(this.view, this.parent, children[children.length - 1], {
+					new LoadMoreNode(this.view, this.parent, children.at(-1)!, {
 						context: { expandAutolinks: true },
 						message: 'Load more commits to search for autolinks',
 					}),

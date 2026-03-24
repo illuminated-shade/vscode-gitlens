@@ -1,22 +1,25 @@
 import type { Disposable } from 'vscode';
 import { window } from 'vscode';
-import { RevealInSideBarQuickInputButton, ShowDetailsViewQuickInputButton } from '../commands/quickCommand.buttons';
-import type { Keys } from '../constants';
-import { Container } from '../container';
-import { reveal, showDetailsView } from '../git/actions/commit';
-import type { GitCommit } from '../git/models/commit';
-import type { GitLog } from '../git/models/log';
-import { configuration } from '../system/-webview/configuration';
-import type { KeyboardScope } from '../system/-webview/keyboard';
-import { getQuickPickIgnoreFocusOut } from '../system/-webview/vscode';
-import { filterMap } from '../system/array';
-import { map } from '../system/iterable';
-import { isPromise } from '../system/promise';
-import { CommandQuickPickItem } from './items/common';
-import type { DirectiveQuickPickItem } from './items/directive';
-import { createDirectiveQuickPickItem, Directive, isDirectiveQuickPickItem } from './items/directive';
-import type { CommitQuickPickItem } from './items/gitWizard';
-import { createCommitQuickPickItem } from './items/gitWizard';
+import {
+	RevealInSideBarQuickInputButton,
+	ShowDetailsViewQuickInputButton,
+} from '../commands/quick-wizard/quickButtons.js';
+import type { Keys } from '../constants.js';
+import { Container } from '../container.js';
+import { revealCommit, showCommitInDetailsView } from '../git/actions/commit.js';
+import type { GitCommit } from '../git/models/commit.js';
+import type { GitLog } from '../git/models/log.js';
+import { configuration } from '../system/-webview/configuration.js';
+import type { KeyboardScope } from '../system/-webview/keyboard.js';
+import { getQuickPickIgnoreFocusOut } from '../system/-webview/vscode.js';
+import { filterMap } from '../system/array.js';
+import { map } from '../system/iterable.js';
+import { isPromise } from '../system/promise.js';
+import { CommandQuickPickItem } from './items/common.js';
+import type { DirectiveQuickPickItem } from './items/directive.js';
+import { createDirectiveQuickPickItem, Directive, isDirectiveQuickPickItem } from './items/directive.js';
+import type { CommitQuickPickItem } from './items/gitWizard.js';
+import { createCommitQuickPickItem } from './items/gitWizard.js';
 
 type Item = CommandQuickPickItem | CommitQuickPickItem | DirectiveQuickPickItem;
 
@@ -219,9 +222,9 @@ export async function showCommitPicker(
 					}
 
 					if (e.button === ShowDetailsViewQuickInputButton) {
-						void showDetailsView(e.item.item, { pin: false, preserveFocus: true });
+						void showCommitInDetailsView(e.item.item, { pin: false, preserveFocus: true });
 					} else if (e.button === RevealInSideBarQuickInputButton) {
-						void reveal(e.item.item, { select: true, focus: false, expand: true });
+						void revealCommit(e.item.item, { select: true, focus: false, expand: true });
 					}
 				}),
 			);

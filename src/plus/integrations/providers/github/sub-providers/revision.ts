@@ -1,19 +1,20 @@
 import type { Uri } from 'vscode';
 import { FileType, workspace } from 'vscode';
-import type { Container } from '../../../../../container';
-import type { GitRevisionSubProvider, ResolvedRevision } from '../../../../../git/gitProvider';
-import { deletedOrMissing } from '../../../../../git/models/revision';
-import type { GitTreeEntry } from '../../../../../git/models/tree';
+import type { Container } from '../../../../../container.js';
+import type { GitRevisionSubProvider, ResolvedRevision } from '../../../../../git/gitProvider.js';
+import { deletedOrMissing } from '../../../../../git/models/revision.js';
+import type { GitTreeEntry } from '../../../../../git/models/tree.js';
 import {
 	isRevisionWithSuffix,
 	isSha,
 	isUncommitted,
 	isUncommittedWithParentSuffix,
-} from '../../../../../git/utils/revision.utils';
-import { gate } from '../../../../../system/decorators/-webview/gate';
-import { log } from '../../../../../system/decorators/log';
-import type { GitHubGitProviderInternal } from '../githubGitProvider';
-import { stripOrigin } from '../githubGitProvider';
+	stripOrigin,
+} from '../../../../../git/utils/revision.utils.js';
+import { gate } from '../../../../../system/decorators/gate.js';
+import { debug } from '../../../../../system/decorators/log.js';
+import { toTokenWithInfo } from '../../../authentication/models.js';
+import type { GitHubGitProviderInternal } from '../githubGitProvider.js';
 
 export class RevisionGitSubProvider implements GitRevisionSubProvider {
 	constructor(
@@ -22,7 +23,7 @@ export class RevisionGitSubProvider implements GitRevisionSubProvider {
 	) {}
 
 	@gate()
-	@log()
+	@debug()
 	async getRevisionContent(repoPath: string, rev: string, path: string): Promise<Uint8Array | undefined> {
 		const uri = rev
 			? this.provider.createProviderUri(repoPath, rev, path)
@@ -31,7 +32,7 @@ export class RevisionGitSubProvider implements GitRevisionSubProvider {
 	}
 
 	@gate()
-	@log()
+	@debug()
 	async getTreeEntryForRevision(repoPath: string, rev: string, path: string): Promise<GitTreeEntry | undefined> {
 		if (repoPath == null || !path) return undefined;
 
@@ -63,8 +64,14 @@ export class RevisionGitSubProvider implements GitRevisionSubProvider {
 		};
 	}
 
+	@debug()
+	async getTrackedFiles(repoPath: string): Promise<string[]> {
+		const tree = await this.getTreeForRevision(repoPath, 'HEAD');
+		return tree.filter(f => f.type === 'blob').map(f => f.path);
+	}
+
 	@gate()
-	@log()
+	@debug()
 	async getTreeForRevision(repoPath: string, rev: string): Promise<GitTreeEntry[]> {
 		if (repoPath == null) return [];
 
@@ -103,7 +110,7 @@ export class RevisionGitSubProvider implements GitRevisionSubProvider {
 		return [];
 	}
 
-	@log()
+	@debug()
 	async resolveRevision(repoPath: string, ref: string, pathOrUri?: string | Uri): Promise<ResolvedRevision> {
 		if (!ref || ref === deletedOrMissing) return { sha: ref, revision: ref };
 
@@ -126,7 +133,7 @@ export class RevisionGitSubProvider implements GitRevisionSubProvider {
 		const { metadata, github, session } = context;
 
 		const sha = await github.resolveReference(
-			session.accessToken,
+			toTokenWithInfo(this.provider.authenticationProviderId, session),
 			metadata.repo.owner,
 			metadata.repo.name,
 			stripOrigin(ref),

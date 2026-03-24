@@ -1,11 +1,11 @@
 import type { Uri } from 'vscode';
-import type { PushFlags } from '../../commands/git/stash';
-import { Container } from '../../container';
-import type { ViewNode } from '../../views/nodes/abstract/viewNode';
-import { executeGitCommand } from '../actions';
-import type { GitStashCommit } from '../models/commit';
-import type { GitStashReference } from '../models/reference';
-import type { Repository } from '../models/repository';
+import { Container } from '../../container.js';
+import type { ViewNode } from '../../views/nodes/abstract/viewNode.js';
+import type { RevealOptions } from '../../views/viewBase.js';
+import { executeGitCommand } from '../actions.js';
+import type { GitStashCommit } from '../models/commit.js';
+import type { GitStashReference } from '../models/reference.js';
+import type { Repository } from '../models/repository.js';
 
 export function apply(repo?: string | Repository, ref?: GitStashReference): Promise<void> {
 	return executeGitCommand({
@@ -43,6 +43,7 @@ export function push(
 	keepStaged: boolean = false,
 	onlyStaged: boolean = false,
 	onlyStagedUris?: Uri[],
+	reducedConfirm?: boolean,
 ): Promise<void> {
 	return executeGitCommand({
 		command: 'stash',
@@ -53,26 +54,20 @@ export function push(
 			onlyStagedUris: onlyStagedUris,
 			message: message,
 			flags: [
-				...(includeUntracked ? ['--include-untracked'] : []),
-				...(keepStaged ? ['--keep-index'] : []),
-				...(onlyStaged ? ['--staged'] : []),
-			] as PushFlags[],
+				...(includeUntracked ? ['--include-untracked' as const] : []),
+				...(keepStaged ? ['--keep-index' as const] : []),
+				...(onlyStaged ? ['--staged' as const] : []),
+			],
+			reducedConfirm: reducedConfirm,
 		},
 	});
 }
 
-export function reveal(
-	stash: GitStashReference,
-	options?: {
-		select?: boolean;
-		focus?: boolean;
-		expand?: boolean | number;
-	},
-): Promise<ViewNode | undefined> {
+export function revealStash(stash: GitStashReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 	return Container.instance.views.revealStash(stash, options);
 }
 
-export function showDetailsView(
+export function showStashInDetailsView(
 	stash: GitStashReference | GitStashCommit,
 	options?: { pin?: boolean; preserveFocus?: boolean },
 ): Promise<void> {

@@ -1,16 +1,16 @@
 import { Uri } from 'vscode';
-import { Schemes } from '../../../constants';
-import { Container } from '../../../container';
-import type { GitCommandOptions, GitSpawnOptions } from '../../../git/commandOptions';
-import type { GitProviderDescriptor } from '../../../git/gitProvider';
-import type { Repository } from '../../../git/models/repository';
-import { isFolderUri } from '../../../system/-webview/path';
-import { addVslsPrefixIfNeeded } from '../../../system/-webview/path.vsls';
-import { Logger } from '../../../system/logger';
-import { getLogScope } from '../../../system/logger.scope';
-import type { GitResult } from './git';
-import { Git } from './git';
-import { LocalGitProvider } from './localGitProvider';
+import { Schemes } from '../../../constants.js';
+import { Container } from '../../../container.js';
+import type { GitExecOptions, GitResult, GitSpawnOptions } from '../../../git/execTypes.js';
+import type { GitProviderDescriptor } from '../../../git/gitProvider.js';
+import type { Repository } from '../../../git/models/repository.js';
+import { isFolderUri } from '../../../system/-webview/path.js';
+import { addVslsPrefixIfNeeded } from '../../../system/-webview/path.vsls.js';
+import { gate } from '../../../system/decorators/gate.js';
+import { trace } from '../../../system/decorators/log.js';
+import { getScopedLogger } from '../../../system/logger.scope.js';
+import { Git } from './git.js';
+import { LocalGitProvider } from './localGitProvider.js';
 
 export class VslsGit extends Git {
 	constructor(
@@ -20,8 +20,8 @@ export class VslsGit extends Git {
 		super(container);
 	}
 
-	override async exec<T extends string | Buffer>(options: GitCommandOptions, ...args: any[]): Promise<GitResult<T>> {
-		if (options.local) {
+	override async exec<T extends string | Buffer>(options: GitExecOptions, ...args: any[]): Promise<GitResult<T>> {
+		if (options.runLocally) {
 			// Since we will have a live share path here, just blank it out
 			options.cwd = '';
 			return this.localGit.exec<T>(options, ...args);
@@ -57,21 +57,31 @@ export class VslsGitProvider extends LocalGitProvider {
 	};
 	override readonly supportedSchemes = new Set<string>([Schemes.Vsls, Schemes.VslsScc]);
 
+	@trace({ exit: true })
 	override async discoverRepositories(uri: Uri): Promise<Repository[]> {
 		if (!this.supportedSchemes.has(uri.scheme)) return [];
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const guest = await this.container.vsls.guest();
 			const repositories = await guest?.getRepositoriesForUri(uri);
-			if (repositories == null || repositories.length === 0) return [];
+			if (!repositories?.length) return [];
 
-			return repositories.flatMap(r =>
-				this.openRepository(undefined, Uri.parse(r.folderUri, true), r.root, undefined, r.closed),
-			);
+			const result: Repository[] = [];
+			for (const r of repositories) {
+				const repoUri = Uri.parse(r.folderUri, true);
+
+				const gitDir = await this.config.getGitDir(repoUri.fsPath);
+				if (gitDir == null) {
+					scope?.warn(`Unable to get gitDir for '${repoUri.toString(true)}'`);
+				}
+
+				result.push(...this.openRepository(undefined, repoUri, gitDir, r.root, r.closed));
+			}
+			return result;
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 
 			return [];
@@ -95,14 +105,14 @@ export class VslsGitProvider extends LocalGitProvider {
 		return super.getAbsoluteUri(pathOrUri, base).with({ scheme: scheme });
 	}
 
+	@gate()
+	@trace({ exit: true })
 	override async findRepositoryUri(uri: Uri, isDirectory?: boolean): Promise<Uri | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		let repoPath: string | undefined;
 		try {
-			if (isDirectory == null) {
-				isDirectory = await isFolderUri(uri);
-			}
+			isDirectory ??= await isFolderUri(uri);
 
 			// If the uri isn't a directory, go up one level
 			if (!isDirectory) {
@@ -120,7 +130,7 @@ export class VslsGitProvider extends LocalGitProvider {
 
 			return repoPath ? Uri.parse(repoPath, true) : undefined;
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return undefined;
 		}
 	}

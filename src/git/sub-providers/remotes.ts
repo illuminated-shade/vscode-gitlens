@@ -1,15 +1,14 @@
 import type { CancellationToken } from 'vscode';
-import type { Container } from '../../container';
-import { CancellationError } from '../../errors';
-import type { GitHostIntegration } from '../../plus/integrations/models/gitHostIntegration';
-import { log } from '../../system/decorators/log';
-import { sortCompare } from '../../system/string';
-import type { GitCache } from '../cache';
-import type { GitProvider, GitRemotesSubProvider } from '../gitProvider';
-import type { GitRemote } from '../models/remote';
-import { RepositoryChange } from '../models/repository';
-import type { RemoteProvider } from '../remotes/remoteProvider';
-import { getDefaultRemoteOrHighlander } from '../utils/remote.utils';
+import type { Container } from '../../container.js';
+import { CancellationError } from '../../errors.js';
+import type { GitHostIntegration } from '../../plus/integrations/models/gitHostIntegration.js';
+import { debug } from '../../system/decorators/log.js';
+import { sortCompare } from '../../system/string.js';
+import type { GitCache } from '../cache.js';
+import type { GitProvider, GitRemotesSubProvider } from '../gitProvider.js';
+import type { GitRemote } from '../models/remote.js';
+import type { RemoteProvider } from '../remotes/remoteProvider.js';
+import { getDefaultRemoteOrHighlander } from '../utils/remote.utils.js';
 
 export abstract class RemotesGitProviderBase implements GitRemotesSubProvider {
 	constructor(
@@ -24,7 +23,7 @@ export abstract class RemotesGitProviderBase implements GitRemotesSubProvider {
 		_cancellation?: CancellationToken,
 	): Promise<GitRemote[]>;
 
-	@log()
+	@debug()
 	async getRemote(
 		repoPath: string | undefined,
 		name: string,
@@ -36,13 +35,13 @@ export abstract class RemotesGitProviderBase implements GitRemotesSubProvider {
 		return remotes.find(r => r.name === name);
 	}
 
-	@log()
+	@debug()
 	async getDefaultRemote(repoPath: string, _cancellation?: CancellationToken): Promise<GitRemote | undefined> {
 		const remotes = await this.getRemotes(repoPath, undefined, _cancellation);
 		return getDefaultRemoteOrHighlander(remotes);
 	}
 
-	@log()
+	@debug()
 	async getRemotesWithProviders(
 		repoPath: string,
 		options?: { sort?: boolean },
@@ -52,7 +51,7 @@ export abstract class RemotesGitProviderBase implements GitRemotesSubProvider {
 		return remotes.filter((r: GitRemote): r is GitRemote<RemoteProvider> => r.provider != null);
 	}
 
-	@log()
+	@debug()
 	async getRemotesWithIntegrations(
 		repoPath: string,
 		options?: { sort?: boolean },
@@ -62,7 +61,7 @@ export abstract class RemotesGitProviderBase implements GitRemotesSubProvider {
 		return remotes.filter((r: GitRemote): r is GitRemote<RemoteProvider> => r.supportsIntegration());
 	}
 
-	@log()
+	@debug()
 	async getBestRemoteWithProvider(
 		repoPath: string,
 		cancellation?: CancellationToken,
@@ -71,90 +70,82 @@ export abstract class RemotesGitProviderBase implements GitRemotesSubProvider {
 		return remotes[0];
 	}
 
-	@log()
+	@debug()
 	async getBestRemotesWithProviders(
 		repoPath: string,
 		cancellation?: CancellationToken,
 	): Promise<GitRemote<RemoteProvider>[]> {
 		if (repoPath == null) return [];
 
-		let remotes = this.cache.bestRemotes.get(repoPath);
-		if (remotes == null) {
-			async function getBest(this: RemotesGitProviderBase) {
-				const remotes = await this.getRemotesWithProviders(repoPath, { sort: true }, cancellation);
-				if (remotes.length === 0) return [];
-				if (remotes.length === 1) return [...remotes];
+		const remotes = this.cache.bestRemotes.getOrCreate(repoPath, async () => {
+			const remotes = await this.getRemotesWithProviders(repoPath, { sort: true }, cancellation);
+			if (remotes.length === 0) return [];
+			if (remotes.length === 1) return [...remotes];
 
-				if (cancellation?.isCancellationRequested) throw new CancellationError();
+			if (cancellation?.isCancellationRequested) throw new CancellationError();
 
-				const defaultRemote = remotes.find(r => r.default)?.name;
-				const currentBranchRemote = (
-					await this.provider.branches.getBranch(remotes[0].repoPath)
-				)?.getRemoteName();
+			const defaultRemote = remotes.find(r => r.default)?.name;
+			const currentBranchRemote = (await this.provider.branches.getBranch(remotes[0].repoPath))?.getRemoteName();
 
-				const weighted: [number, GitRemote<RemoteProvider>][] = [];
+			const weighted: [number, GitRemote<RemoteProvider>][] = [];
 
-				let originalFound = false;
+			let originalFound = false;
 
-				for (const remote of remotes) {
-					let weight;
-					switch (remote.name) {
-						case defaultRemote:
-							weight = 1000;
-							break;
-						case currentBranchRemote:
-							weight = 6;
-							break;
-						case 'upstream':
-							weight = 5;
-							break;
-						case 'origin':
-							weight = 4;
-							break;
-						default:
-							weight = 0;
-					}
-
-					// Only check remotes that have extra weighting and less than the default
-					if (weight > 0 && weight < 1000 && !originalFound) {
-						const integration = await remote.getIntegration();
-						if (
-							integration != null &&
-							(integration.maybeConnected ||
-								(integration.maybeConnected === undefined && (await integration.isConnected())))
-						) {
-							if (cancellation?.isCancellationRequested) throw new CancellationError();
-
-							const repo = await integration.getRepositoryMetadata(remote.provider.repoDesc, {
-								cancellation: cancellation,
-							});
-
-							if (cancellation?.isCancellationRequested) throw new CancellationError();
-
-							if (repo != null) {
-								weight += repo.isFork ? -3 : 3;
-								// Once we've found the "original" (not a fork) don't bother looking for more
-								originalFound = !repo.isFork;
-							}
-						}
-					}
-
-					weighted.push([weight, remote]);
+			for (const remote of remotes) {
+				let weight;
+				switch (remote.name) {
+					case defaultRemote:
+						weight = 1000;
+						break;
+					case currentBranchRemote:
+						weight = 6;
+						break;
+					case 'upstream':
+						weight = 5;
+						break;
+					case 'origin':
+						weight = 4;
+						break;
+					default:
+						weight = 0;
 				}
 
-				// Sort by the weight, but if both are 0 (no weight) then sort by name
-				weighted.sort(([aw, ar], [bw, br]) => (bw === 0 && aw === 0 ? sortCompare(ar.name, br.name) : bw - aw));
-				return weighted.map(wr => wr[1]);
+				// Only check remotes that have extra weighting and less than the default
+				if (weight > 0 && weight < 1000 && !originalFound) {
+					const integration = await remote.getIntegration();
+					if (
+						integration != null &&
+						(integration.maybeConnected ||
+							(integration.maybeConnected === undefined && (await integration.isConnected())))
+					) {
+						if (cancellation?.isCancellationRequested) throw new CancellationError();
+
+						const repo = await integration.getRepositoryMetadata(remote.provider.repoDesc, {
+							cancellation: cancellation,
+						});
+
+						if (cancellation?.isCancellationRequested) throw new CancellationError();
+
+						if (repo != null) {
+							weight += repo.isFork ? -3 : 3;
+							// Once we've found the "original" (not a fork) don't bother looking for more
+							originalFound = !repo.isFork;
+						}
+					}
+				}
+
+				weighted.push([weight, remote]);
 			}
 
-			remotes = getBest.call(this);
-			this.cache.bestRemotes.set(repoPath, remotes);
-		}
+			// Sort by the weight, but if both are 0 (no weight) then sort by name
+			weighted.sort(([aw, ar], [bw, br]) => (bw === 0 && aw === 0 ? sortCompare(ar.name, br.name) : bw - aw));
+			return weighted.map(wr => wr[1]);
+		});
 
 		return [...(await remotes)];
 	}
 
-	@log()
+	@debug()
 	async getBestRemoteWithIntegration(
 		repoPath: string,
 		options?: {
@@ -183,12 +174,12 @@ export abstract class RemotesGitProviderBase implements GitRemotesSubProvider {
 		return undefined;
 	}
 
-	@log()
+	@debug()
 	async setRemoteAsDefault(repoPath: string, name: string, value: boolean = true): Promise<void> {
 		await this.container.storage.storeWorkspace('remote:default', value ? name : undefined);
 		this.container.events.fire('git:repo:change', {
 			repoPath: repoPath,
-			changes: [RepositoryChange.Remotes, RepositoryChange.RemoteProviders],
+			changes: ['remotes', 'remoteProviders'],
 		});
 	}
 }

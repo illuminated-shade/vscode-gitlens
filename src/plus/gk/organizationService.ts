@@ -1,19 +1,19 @@
 import { Disposable, window } from 'vscode';
-import type { Container } from '../../container';
-import { setContext } from '../../system/-webview/context';
-import { gate } from '../../system/decorators/-webview/gate';
-import { once } from '../../system/function';
-import { Logger } from '../../system/logger';
-import { getLogScope } from '../../system/logger.scope';
+import type { Container } from '../../container.js';
+import { setContext } from '../../system/-webview/context.js';
+import { gate } from '../../system/decorators/gate.js';
+import { debug } from '../../system/decorators/log.js';
+import { once } from '../../system/function.js';
+import { getScopedLogger } from '../../system/logger.scope.js';
 import type {
 	Organization,
 	OrganizationMember,
 	OrganizationSettings,
 	OrganizationsResponse,
-} from './models/organization';
-import { fromGKDevAIProviders } from './models/organization';
-import type { ServerConnection } from './serverConnection';
-import type { SubscriptionChangeEvent } from './subscriptionService';
+} from './models/organization.js';
+import { fromGKDevAIProviders } from './models/organization.js';
+import type { ServerConnection } from './serverConnection.js';
+import type { SubscriptionChangeEvent } from './subscriptionService.js';
 
 const organizationsCacheExpiration = 24 * 60 * 60 * 1000; // 1 day
 
@@ -44,12 +44,13 @@ export class OrganizationService implements Disposable {
 	}
 
 	@gate()
+	@debug({ args: options => ({ options: `force=${options?.force}, userId=${options?.userId}` }) })
 	async getOrganizations(options?: {
 		force?: boolean;
 		accessToken?: string;
 		userId?: string;
 	}): Promise<Organization[] | null | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		const userId = options?.userId ?? (await this.container.subscription.getSubscription(true))?.account?.id;
 		if (userId == null) {
 			this.updateOrganizations(undefined);
@@ -73,7 +74,7 @@ export class OrganizationService implements Disposable {
 				);
 			} catch (ex) {
 				debugger;
-				Logger.error(ex, scope);
+				scope?.error(ex);
 
 				void window.showErrorMessage(`Unable to get organizations due to error: ${ex}`, 'OK');
 				this.updateOrganizations(undefined);
@@ -82,11 +83,7 @@ export class OrganizationService implements Disposable {
 
 			if (!rsp.ok) {
 				debugger;
-				Logger.error(
-					undefined,
-					scope,
-					`Unable to get organizations; status=(${rsp.status}): ${rsp.statusText}`,
-				);
+				scope?.error(undefined, `Unable to get organizations; status=(${rsp.status}): ${rsp.statusText}`);
 
 				void window.showErrorMessage(`Unable to get organizations; Status: ${rsp.statusText}`, 'OK');
 
@@ -179,7 +176,9 @@ export class OrganizationService implements Disposable {
 	}
 
 	@gate()
+	@debug()
 	async getMembers(id?: string | undefined, options?: { force?: boolean }): Promise<OrganizationMember[]> {
+		const scope = getScopedLogger();
 		if (id == null) {
 			id = await this.getActiveOrganizationId();
 			if (id == null) return [];
@@ -191,9 +190,8 @@ export class OrganizationService implements Disposable {
 			};
 			const rsp = await this.connection.fetchGkApi(`organization/${id}/members`, { method: 'GET' });
 			if (!rsp.ok) {
-				Logger.error(
-					'',
-					getLogScope(),
+				scope?.error(
+					undefined,
 					`Unable to get organization members; status=(${rsp.status}): ${rsp.statusText}`,
 				);
 				return [];
@@ -209,10 +207,12 @@ export class OrganizationService implements Disposable {
 		return this._organizationMembers.get(id) ?? [];
 	}
 
+	@debug()
 	async getMemberById(id: string, organizationId: string): Promise<OrganizationMember | undefined> {
 		return (await this.getMembers(organizationId)).find(m => m.id === id);
 	}
 
+	@debug()
 	async getMembersByIds(ids: string[], organizationId: string): Promise<OrganizationMember[]> {
 		return (await this.getMembers(organizationId)).filter(m => ids.includes(m.id));
 	}
@@ -223,6 +223,7 @@ export class OrganizationService implements Disposable {
 	}
 
 	@gate()
+	@debug()
 	async getOrganizationSettings(
 		orgId: string | undefined,
 		options?: { force?: boolean },
@@ -231,6 +232,9 @@ export class OrganizationService implements Disposable {
 			data: OrganizationSettings;
 			error: string | undefined;
 		};
+
+		const scope = getScopedLogger();
+
 		// TODO: maybe getActiveOrganizationId(false) when force is true
 		const id = orgId ?? (await this.getActiveOrganizationId());
 		if (id == null) return undefined;
@@ -258,9 +262,8 @@ export class OrganizationService implements Disposable {
 				{ organizationId: id },
 			);
 			if (!rsp.ok) {
-				Logger.error(
-					'',
-					getLogScope(),
+				scope?.error(
+					undefined,
 					`Unable to get organization settings; status=(${rsp.status}): ${rsp.statusText}`,
 				);
 				return undefined;
@@ -268,17 +271,14 @@ export class OrganizationService implements Disposable {
 
 			const organizationResponse = (await rsp.json()) as OrganizationSettingsResponse;
 			if (organizationResponse.error != null) {
-				Logger.error(
+				scope?.error(
 					'',
-					getLogScope(),
 					`Unable to get organization settings; status=(${rsp.status}): ${organizationResponse.error}`,
 				);
 				return undefined;
 			}
 
-			if (this._organizationSettings == null) {
-				this._organizationSettings = new Map();
-			}
+			this._organizationSettings ??= new Map();
 			this._organizationSettings.set(id, { data: organizationResponse.data, lastValidatedDate: new Date() });
 			await this.storeOrganizationSettings(id, organizationResponse.data, new Date());
 		}

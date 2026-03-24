@@ -1,39 +1,39 @@
 import type { CancellationToken, Command, Disposable, Event, TreeItem } from 'vscode';
-import type { TreeViewNodeTypes, TreeViewTypes } from '../../../constants.views';
-import type { GitUri } from '../../../git/gitUri';
-import type { GitBranch } from '../../../git/models/branch';
-import type { GitCommit } from '../../../git/models/commit';
-import type { GitContributor } from '../../../git/models/contributor';
-import type { GitFile } from '../../../git/models/file';
-import type { GitPausedOperation } from '../../../git/models/pausedOperationStatus';
-import type { PullRequest } from '../../../git/models/pullRequest';
-import type { GitReflogRecord } from '../../../git/models/reflog';
-import type { GitRemote } from '../../../git/models/remote';
-import type { Repository } from '../../../git/models/repository';
-import type { GitTag } from '../../../git/models/tag';
-import type { GitWorktree } from '../../../git/models/worktree';
-import type { Draft } from '../../../plus/drafts/models/drafts';
-import type { LaunchpadItem } from '../../../plus/launchpad/launchpadProvider';
-import type { LaunchpadGroup } from '../../../plus/launchpad/models/launchpad';
+import type { TreeViewNodeTypes, TreeViewTypes } from '../../../constants.views.js';
+import type { GitUri } from '../../../git/gitUri.js';
+import { unknownGitUri } from '../../../git/gitUri.js';
+import type { GitBranch } from '../../../git/models/branch.js';
+import type { GitCommit } from '../../../git/models/commit.js';
+import type { GitContributor } from '../../../git/models/contributor.js';
+import type { GitFile } from '../../../git/models/file.js';
+import type { GitPausedOperation } from '../../../git/models/pausedOperationStatus.js';
+import type { PullRequest } from '../../../git/models/pullRequest.js';
+import type { GitReflogRecord } from '../../../git/models/reflog.js';
+import type { GitRemote } from '../../../git/models/remote.js';
+import type { Repository } from '../../../git/models/repository.js';
+import type { GitTag } from '../../../git/models/tag.js';
+import type { GitWorktree } from '../../../git/models/worktree.js';
+import type { Draft } from '../../../plus/drafts/models/drafts.js';
+import type { LaunchpadItem } from '../../../plus/launchpad/launchpadProvider.js';
+import type { LaunchpadGroup } from '../../../plus/launchpad/models/launchpad.js';
 import {
 	launchpadCategoryToGroupMap,
 	sharedCategoryToLaunchpadActionCategoryMap,
-} from '../../../plus/launchpad/models/launchpad';
+} from '../../../plus/launchpad/models/launchpad.js';
 import type {
 	CloudWorkspace,
 	CloudWorkspaceRepositoryDescriptor,
-} from '../../../plus/workspaces/models/cloudWorkspace';
+} from '../../../plus/workspaces/models/cloudWorkspace.js';
 import type {
 	LocalWorkspace,
 	LocalWorkspaceRepositoryDescriptor,
-} from '../../../plus/workspaces/models/localWorkspace';
-import { gate } from '../../../system/decorators/-webview/gate';
-import { debug, logName } from '../../../system/decorators/log';
-import { is as isA } from '../../../system/function';
-import { getLoggableName } from '../../../system/logger';
-import type { View } from '../../viewBase';
-import type { BranchTrackingStatus } from '../branchTrackingStatusNode';
-import type { TreeViewNodesByType } from '../utils/-webview/node.utils';
+} from '../../../plus/workspaces/models/localWorkspace.js';
+import { loggable, logName, trace } from '../../../system/decorators/log.js';
+import { sequentialize } from '../../../system/decorators/sequentialize.js';
+import { is as isA } from '../../../system/function.js';
+import type { View } from '../../viewBase.js';
+import type { BranchTrackingStatus } from '../branchTrackingStatusNode.js';
+import type { TreeViewNodesByType } from '../utils/-webview/node.utils.js';
 
 export const enum ContextValues {
 	ActiveFileHistory = 'gitlens:history:active:file',
@@ -55,8 +55,6 @@ export const enum ContextValues {
 	CommitsCurrentBranch = 'gitlens:commits:current-branch',
 	Compare = 'gitlens:compare',
 	CompareBranch = 'gitlens:compare:branch',
-	ComparePicker = 'gitlens:compare:picker',
-	ComparePickerWithRef = 'gitlens:compare:picker:ref',
 	CompareResults = 'gitlens:compare:results',
 	CompareResultsCommits = 'gitlens:compare:results:commits',
 	Contributor = 'gitlens:contributor',
@@ -68,6 +66,8 @@ export const enum ContextValues {
 	Folder = 'gitlens:folder',
 	Grouping = 'gitlens:grouping',
 	LaunchpadItem = 'gitlens:launchpad:item',
+	LaunchpadError = 'gitlens:launchpad:error',
+	LaunchpadErrorAuth = 'gitlens:launchpad:error+auth',
 	LineHistory = 'gitlens:history:line',
 	MergeConflictCurrentChanges = 'gitlens:merge-conflict:current',
 	MergeConflictIncomingChanges = 'gitlens:merge-conflict:incoming',
@@ -127,6 +127,7 @@ export interface AmbientContext {
 	readonly reflog?: GitReflogRecord;
 	readonly remote?: GitRemote;
 	readonly repository?: Repository;
+	readonly repoPath?: string;
 	readonly root?: boolean;
 	readonly searchId?: string;
 	readonly storedComparisonId?: string;
@@ -150,8 +151,8 @@ export function getViewNodeId(type: string, context: AmbientContext): string {
 	if (context.wsRepositoryDescriptor != null) {
 		uniqueness += `/wsrepo/${context.wsRepositoryDescriptor.id}`;
 	}
-	if (context.repository != null) {
-		uniqueness += `/repo/${context.repository.id}`;
+	if (context.repository != null || context.repoPath != null) {
+		uniqueness += `/repo/${context.repository?.id ?? context.repoPath}`;
 	}
 	if (context.worktree != null) {
 		uniqueness += `/worktree/${context.worktree.uri.path}`;
@@ -219,13 +220,16 @@ export function getViewNodeId(type: string, context: AmbientContext): string {
 
 export type ClipboardType = 'text' | 'markdown';
 
-@logName<ViewNode>((c, name) => `${name}${c.id != null ? `(${c.id})` : ''}`)
+@logName(
+	(c, name) =>
+		`${name}${c.id != null || (c.uri != null && c.uri !== unknownGitUri) ? `(${c.id ?? c.uri.toString()})` : ''}`,
+)
+@loggable()
 export abstract class ViewNode<
 	Type extends TreeViewNodeTypes = TreeViewNodeTypes,
 	TView extends View = View,
 	State extends object = any,
-> implements Disposable
-{
+> implements Disposable {
 	is<T extends keyof TreeViewNodesByType>(type: T): this is TreeViewNodesByType[T] {
 		return this.type === (type as unknown as Type);
 	}
@@ -296,10 +300,6 @@ export abstract class ViewNode<
 	getUrl?(): string | Promise<string | undefined> | undefined;
 	toClipboard?(type?: ClipboardType): string | Promise<string>;
 
-	toString(): string {
-		return getLoggableName(this);
-	}
-
 	protected _uri: GitUri;
 	get uri(): GitUri {
 		return this._uri;
@@ -322,8 +322,8 @@ export abstract class ViewNode<
 
 	refresh?(reset?: boolean): void | { cancel: boolean } | Promise<void | { cancel: boolean }>;
 
-	@gate()
-	@debug()
+	@sequentialize()
+	@trace()
 	triggerChange(reset: boolean = false, force: boolean = false, avoidSelf?: ViewNode): Promise<void> {
 		if (this._disposed) return Promise.resolve();
 

@@ -1,22 +1,22 @@
 import { TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import { GlyphChars } from '../../constants';
-import { emojify } from '../../emojis';
-import type { GitUri } from '../../git/gitUri';
-import type { GitLog } from '../../git/models/log';
-import type { GitTagReference } from '../../git/models/reference';
-import type { GitTag } from '../../git/models/tag';
-import { shortenRevision } from '../../git/utils/revision.utils';
-import { gate } from '../../system/decorators/-webview/gate';
-import { debug } from '../../system/decorators/log';
-import { map } from '../../system/iterable';
-import { pad } from '../../system/string';
-import type { ViewsWithTags } from '../viewBase';
-import type { PageableViewNode, ViewNode } from './abstract/viewNode';
-import { ContextValues, getViewNodeId } from './abstract/viewNode';
-import { ViewRefNode } from './abstract/viewRefNode';
-import { CommitNode } from './commitNode';
-import { LoadMoreNode, MessageNode } from './common';
-import { insertDateMarkers } from './utils/-webview/node.utils';
+import { GlyphChars } from '../../constants.js';
+import { emojify } from '../../emojis.js';
+import type { GitUri } from '../../git/gitUri.js';
+import type { GitLog } from '../../git/models/log.js';
+import type { GitTagReference } from '../../git/models/reference.js';
+import type { GitTag } from '../../git/models/tag.js';
+import { shortenRevision } from '../../git/utils/revision.utils.js';
+import { gate } from '../../system/decorators/gate.js';
+import { trace } from '../../system/decorators/log.js';
+import { map } from '../../system/iterable.js';
+import { pad } from '../../system/string.js';
+import type { ViewsWithTags } from '../viewBase.js';
+import type { PageableViewNode, ViewNode } from './abstract/viewNode.js';
+import { ContextValues, getViewNodeId } from './abstract/viewNode.js';
+import { ViewRefNode } from './abstract/viewRefNode.js';
+import { CommitNode } from './commitNode.js';
+import { LoadMoreNode, MessageNode } from './common.js';
+import { insertDateMarkers } from './utils/-webview/node.utils.js';
 
 export class TagNode extends ViewRefNode<'tag', ViewsWithTags, GitTagReference> implements PageableViewNode {
 	limit: number | undefined;
@@ -69,7 +69,7 @@ export class TagNode extends ViewRefNode<'tag', ViewsWithTags, GitTagReference> 
 
 		if (log.hasMore) {
 			children.push(
-				new LoadMoreNode(this.view, this, children[children.length - 1], {
+				new LoadMoreNode(this.view, this, children.at(-1)!, {
 					getCount: () =>
 						this.view.container.git
 							.getRepositoryService(this.tag.repoPath)
@@ -102,7 +102,7 @@ export class TagNode extends ViewRefNode<'tag', ViewsWithTags, GitTagReference> 
 		return item;
 	}
 
-	@debug()
+	@trace()
 	override refresh(reset?: boolean): void {
 		if (reset) {
 			this._log = undefined;
@@ -111,13 +111,11 @@ export class TagNode extends ViewRefNode<'tag', ViewsWithTags, GitTagReference> 
 
 	private _log: GitLog | undefined;
 	private async getLog() {
-		if (this._log == null) {
-			this._log = await this.view.container.git
-				.getRepositoryService(this.uri.repoPath!)
-				.commits.getLog(this.tag.name, {
-					limit: this.limit ?? this.view.config.defaultItemLimit,
-				});
-		}
+		this._log ??= await this.view.container.git
+			.getRepositoryService(this.uri.repoPath!)
+			.commits.getLog(this.tag.name, {
+				limit: this.limit ?? this.view.config.defaultItemLimit,
+			});
 
 		return this._log;
 	}

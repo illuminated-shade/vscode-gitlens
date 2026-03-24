@@ -1,21 +1,22 @@
-import type { RemotesConfig } from '../../config';
-import type { CloudGitSelfManagedHostIntegrationIds } from '../../constants.integrations';
-import { GitSelfManagedHostIntegrationId } from '../../constants.integrations';
-import type { Container } from '../../container';
-import type { ConfiguredIntegrationDescriptor } from '../../plus/integrations/authentication/models';
-import { isCloudGitSelfManagedHostIntegrationId } from '../../plus/integrations/utils/-webview/integration.utils';
-import { configuration } from '../../system/-webview/configuration';
-import { Logger } from '../../system/logger';
-import { AzureDevOpsRemote } from './azure-devops';
-import { BitbucketRemote } from './bitbucket';
-import { BitbucketServerRemote } from './bitbucket-server';
-import { CustomRemote } from './custom';
-import { GerritRemote } from './gerrit';
-import { GiteaRemote } from './gitea';
-import { GitHubRemote } from './github';
-import { GitLabRemote } from './gitlab';
-import { GoogleSourceRemote } from './google-source';
-import type { RemoteProvider } from './remoteProvider';
+import type { ConfigurationScope } from 'vscode';
+import type { RemotesConfig } from '../../config.js';
+import type { CloudGitSelfManagedHostIntegrationIds } from '../../constants.integrations.js';
+import { GitSelfManagedHostIntegrationId } from '../../constants.integrations.js';
+import type { Container } from '../../container.js';
+import type { ConfiguredIntegrationDescriptor } from '../../plus/integrations/authentication/models.js';
+import { isCloudGitSelfManagedHostIntegrationId } from '../../plus/integrations/utils/-webview/integration.utils.js';
+import { configuration } from '../../system/-webview/configuration.js';
+import { Logger } from '../../system/logger.js';
+import { AzureDevOpsRemote } from './azure-devops.js';
+import { BitbucketServerRemote } from './bitbucket-server.js';
+import { BitbucketRemote } from './bitbucket.js';
+import { CustomRemote } from './custom.js';
+import { GerritRemote } from './gerrit.js';
+import { GiteaRemote } from './gitea.js';
+import { GitHubRemote } from './github.js';
+import { GitLabRemote } from './gitlab.js';
+import { GoogleSourceRemote } from './google-source.js';
+import type { RemoteProvider } from './remoteProvider.js';
 
 export type RemoteProviders = {
 	custom: boolean;
@@ -92,6 +93,8 @@ const cloudProviderCreatorsMap: Record<
 		path: string,
 		scheme: string | undefined,
 	) => new BitbucketServerRemote(container, domain, path, cleanProtocol(scheme)),
+	[GitSelfManagedHostIntegrationId.AzureDevOpsServer]: (container: Container, domain: string, path: string) =>
+		new AzureDevOpsRemote(container, domain, path),
 };
 
 const dirtyProtocolPattern = /(\w+)\W*/;
@@ -100,9 +103,17 @@ function cleanProtocol(scheme: string | undefined): string | undefined {
 	return match?.[1] ?? undefined;
 }
 
-export function loadRemoteProviders(
+export function loadRemoteProvidersFromConfig(
+	scope: ConfigurationScope | null,
+	configuredIntegrations: ConfiguredIntegrationDescriptor[] | undefined,
+): RemoteProviders {
+	const configuredRemotes = configuration.get('remotes', scope);
+	return loadRemoteProviders(configuredRemotes, configuredIntegrations);
+}
+
+function loadRemoteProviders(
 	cfg: RemotesConfig[] | null | undefined,
-	configuredIntegrations?: ConfiguredIntegrationDescriptor[],
+	configuredIntegrations: ConfiguredIntegrationDescriptor[] | undefined,
 ): RemoteProviders {
 	const providers: RemoteProviders = [];
 
@@ -192,13 +203,7 @@ export async function getRemoteProviderMatcher(
 	container: Container,
 	providers?: RemoteProviders,
 ): Promise<(url: string, domain: string, path: string, sheme: string | undefined) => RemoteProvider | undefined> {
-	if (providers == null) {
-		providers = loadRemoteProviders(
-			configuration.get('remotes', null),
-			await container.integrations.getConfigured(),
-		);
-	}
-
+	providers ??= loadRemoteProvidersFromConfig(null, await container.integrations.getConfigured());
 	return (url: string, domain: string, path: string, scheme) =>
 		createBestRemoteProvider(container, providers, url, domain, path, scheme);
 }

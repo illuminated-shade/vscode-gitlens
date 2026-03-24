@@ -1,24 +1,24 @@
 import type { DecorationOptions, TextEditor, ThemableDecorationAttachmentRenderOptions } from 'vscode';
 import { Range } from 'vscode';
-import type { GravatarDefaultStyle } from '../config';
-import { GlyphChars } from '../constants';
-import type { Container } from '../container';
-import type { CommitFormatOptions } from '../git/formatters/commitFormatter';
-import { CommitFormatter } from '../git/formatters/commitFormatter';
-import type { GitCommit } from '../git/models/commit';
-import { configuration } from '../system/-webview/configuration';
-import { filterMap } from '../system/array';
-import { log } from '../system/decorators/log';
-import { first } from '../system/iterable';
-import { getLogScope } from '../system/logger.scope';
-import { maybeStopWatch } from '../system/stopwatch';
-import type { TokenOptions } from '../system/string';
-import { getTokensFromTemplate, getWidth } from '../system/string';
-import type { TrackedGitDocument } from '../trackers/trackedDocument';
-import type { AnnotationContext, AnnotationState, DidChangeStatusCallback } from './annotationProvider';
-import { applyHeatmap, getGutterDecoration, getGutterRenderOptions } from './annotations';
-import { BlameAnnotationProviderBase } from './blameAnnotationProvider';
-import { Decorations } from './fileAnnotationController';
+import type { GravatarDefaultStyle } from '../config.js';
+import { GlyphChars } from '../constants.js';
+import type { Container } from '../container.js';
+import type { CommitFormatOptions } from '../git/formatters/commitFormatter.js';
+import { CommitFormatter } from '../git/formatters/commitFormatter.js';
+import type { GitCommit } from '../git/models/commit.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { filterMap } from '../system/array.js';
+import { debug } from '../system/decorators/log.js';
+import { first } from '../system/iterable.js';
+import { getScopedLogger } from '../system/logger.scope.js';
+import { maybeStopWatch } from '../system/stopwatch.js';
+import type { TokenOptions } from '../system/string.js';
+import { getTokensFromTemplate, getWidth } from '../system/string.js';
+import type { TrackedGitDocument } from '../trackers/trackedDocument.js';
+import type { AnnotationContext, AnnotationState, DidChangeStatusCallback } from './annotationProvider.js';
+import { applyHeatmap, getGutterDecoration, getGutterRenderOptions } from './annotations.js';
+import { BlameAnnotationProviderBase } from './blameAnnotationProvider.js';
+import { Decorations } from './fileAnnotationController.js';
 
 const maxSmallIntegerV8 = 2 ** 30 - 1; // Max number that can be stored in V8's smis (small integers)
 
@@ -49,9 +49,9 @@ export class GutterBlameAnnotationProvider extends BlameAnnotationProviderBase {
 		}
 	}
 
-	@log()
+	@debug()
 	override async onProvideAnnotation(_context?: AnnotationContext, state?: AnnotationState): Promise<boolean> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const blame = await this.getBlame(state?.recompute);
 		if (blame == null) return false;
@@ -80,6 +80,7 @@ export class GutterBlameAnnotationProvider extends BlameAnnotationProviderBase {
 			dateFormat: cfg.dateFormat === null ? configuration.get('defaultDateFormat') : cfg.dateFormat,
 			getBranchAndTagTips: getBranchAndTagTips,
 			tokenOptions: tokenOptions,
+			source: { source: 'editor:hover' },
 		};
 
 		const fontOptions: BlameFontOptions = {
@@ -129,9 +130,7 @@ export class GutterBlameAnnotationProvider extends BlameAnnotationProviderBase {
 
 				if (cfg.compact && !compacted) {
 					// Since the line length is the same just generate a single new empty line
-					if (emptyLine == null) {
-						emptyLine = GlyphChars.Space.repeat(getWidth(gutter.renderOptions!.before!.contentText!));
-					}
+					emptyLine ??= GlyphChars.Space.repeat(getWidth(gutter.renderOptions!.before!.contentText!));
 
 					// Since we are wiping out the contextText make sure to copy the objects
 					gutter.renderOptions = {
@@ -208,7 +207,7 @@ export class GutterBlameAnnotationProvider extends BlameAnnotationProviderBase {
 		return true;
 	}
 
-	@log({ args: false })
+	@debug({ args: false })
 	override async selection(selection?: AnnotationContext['selection']): Promise<void> {
 		if (selection === false || Decorations.gutterBlameHighlight == null) return;
 

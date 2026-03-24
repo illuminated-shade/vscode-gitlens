@@ -19,18 +19,18 @@ import {
 	Uri,
 	window,
 } from 'vscode';
-import { getPlatform } from '@env/platform';
-import type { OpenWalkthroughCommandArgs } from '../../commands/walkthroughs';
-import { urls } from '../../constants';
-import type { CoreColors } from '../../constants.colors';
-import type { GlCommands } from '../../constants.commands';
-import type { StoredFeaturePreviewUsagePeriod } from '../../constants.storage';
+import { getPlatform } from '@env/platform.js';
+import type { OpenWalkthroughCommandArgs } from '../../commands/walkthroughs.js';
+import type { CoreColors } from '../../constants.colors.js';
+import type { GlCommands } from '../../constants.commands.js';
+import { urls } from '../../constants.js';
+import type { StoredFeaturePreviewUsagePeriod } from '../../constants.storage.js';
 import {
 	proFeaturePreviewUsageDurationInDays,
 	proFeaturePreviewUsages,
 	proTrialLengthInDays,
 	SubscriptionState,
-} from '../../constants.subscription';
+} from '../../constants.subscription.js';
 import type {
 	FeaturePreviewActionEventData,
 	FeaturePreviewDayEventData,
@@ -39,40 +39,39 @@ import type {
 	SubscriptionEventDataWithPrevious,
 	SubscriptionFeaturePreviewsEventData,
 	TrackingContext,
-} from '../../constants.telemetry';
-import type { Container } from '../../container';
-import { AccountValidationError, RequestsAreBlockedTemporarilyError } from '../../errors';
-import type { FeaturePreview, FeaturePreviews } from '../../features';
-import { featurePreviews, getFeaturePreviewLabel, getFeaturePreviewStatus } from '../../features';
-import type { RepositoriesChangeEvent } from '../../git/gitProviderService';
-import { executeCommand, registerCommand } from '../../system/-webview/command';
-import { configuration } from '../../system/-webview/configuration';
-import { setContext } from '../../system/-webview/context';
-import { openUrl } from '../../system/-webview/vscode/uris';
-import { createFromDateDelta, fromNow } from '../../system/date';
-import { gate } from '../../system/decorators/-webview/gate';
-import { debug, log } from '../../system/decorators/log';
-import { take } from '../../system/event';
-import { once } from '../../system/function';
-import type { Deferrable } from '../../system/function/debounce';
-import { debounce } from '../../system/function/debounce';
-import { Logger } from '../../system/logger';
-import { getLogScope, setLogScopeExit } from '../../system/logger.scope';
-import { flatten } from '../../system/object';
-import { pauseOnCancelOrTimeout } from '../../system/promise';
-import { pluralize } from '../../system/string';
-import { createDisposable } from '../../system/unifiedDisposable';
-import { isWalkthroughSupported } from '../../telemetry/walkthroughStateProvider';
-import { LoginUriPathPrefix } from './authenticationConnection';
-import { authenticationProviderScopes } from './authenticationProvider';
-import type { GKCheckInResponse } from './models/checkin';
-import type { Organization } from './models/organization';
-import type { Promo } from './models/promo';
-import type { PaidSubscriptionPlanIds, Subscription, SubscriptionUpgradeCommandArgs } from './models/subscription';
-import type { ServerConnection } from './serverConnection';
-import { ensurePlusFeaturesEnabled } from './utils/-webview/plus.utils';
-import { getConfiguredActiveOrganizationId, updateActiveOrganizationId } from './utils/-webview/subscription.utils';
-import { getSubscriptionFromCheckIn } from './utils/checkin.utils';
+} from '../../constants.telemetry.js';
+import type { Container } from '../../container.js';
+import { AccountValidationError, RequestsAreBlockedTemporarilyError } from '../../errors.js';
+import type { FeaturePreview, FeaturePreviews } from '../../features.js';
+import { featurePreviews, getFeaturePreviewLabel, getFeaturePreviewStatus } from '../../features.js';
+import type { RepositoriesChangeEvent } from '../../git/gitProviderService.js';
+import { executeCommand, registerCommand } from '../../system/-webview/command.js';
+import { configuration } from '../../system/-webview/configuration.js';
+import { setContext } from '../../system/-webview/context.js';
+import { openUrl } from '../../system/-webview/vscode/uris.js';
+import { createFromDateDelta, fromNow } from '../../system/date.js';
+import { gate } from '../../system/decorators/gate.js';
+import { debug, info, trace } from '../../system/decorators/log.js';
+import { take } from '../../system/event.js';
+import type { Deferrable } from '../../system/function/debounce.js';
+import { debounce } from '../../system/function/debounce.js';
+import { once } from '../../system/function.js';
+import { Logger } from '../../system/logger.js';
+import { getScopedLogger } from '../../system/logger.scope.js';
+import { flatten } from '../../system/object.js';
+import { pauseOnCancelOrTimeout } from '../../system/promise.js';
+import { pluralize } from '../../system/string.js';
+import { createDisposable } from '../../system/unifiedDisposable.js';
+import { LoginUriPathPrefix } from './authenticationConnection.js';
+import { authenticationProviderScopes } from './authenticationProvider.js';
+import type { GKCheckInResponse } from './models/checkin.js';
+import type { Organization } from './models/organization.js';
+import type { Promo } from './models/promo.js';
+import type { PaidSubscriptionPlanIds, Subscription, SubscriptionUpgradeCommandArgs } from './models/subscription.js';
+import type { ServerConnection } from './serverConnection.js';
+import { ensurePlusFeaturesEnabled } from './utils/-webview/plus.utils.js';
+import { getConfiguredActiveOrganizationId, updateActiveOrganizationId } from './utils/-webview/subscription.utils.js';
+import { getSubscriptionFromCheckIn } from './utils/checkin.utils.js';
 import {
 	AiAllAccessOptInPathPrefix,
 	assertSubscriptionState,
@@ -89,7 +88,7 @@ import {
 	isSubscriptionPaid,
 	isSubscriptionTrial,
 	SubscriptionUpdatedUriPathPrefix,
-} from './utils/subscription.utils';
+} from './utils/subscription.utils.js';
 
 export type FeaturePreviewChangeEvent = FeaturePreview;
 
@@ -142,7 +141,7 @@ export class SubscriptionService implements Disposable {
 			}),
 			container.uri.onDidReceiveSubscriptionUpdatedUri(() => this.checkUpdatedSubscription(undefined), this),
 			container.uri.onDidReceiveAiAllAccessOptInUri(this.onAiAllAccessOptInUri, this),
-			container.uri.onDidReceiveLoginUri(this.onLoginUri, this),
+			container.uri.onDidReceiveLoginUri(this.onLoginUriReceived, this),
 		);
 
 		const subscription = this.getStoredSubscription();
@@ -199,7 +198,7 @@ export class SubscriptionService implements Disposable {
 		this.updateContext();
 
 		if (DEBUG) {
-			void import(/* webpackChunkName: "__debug__" */ './__debug__accountDebug').then(m => {
+			void import(/* webpackChunkName: "__debug__" */ './__debug__accountDebug.js').then(m => {
 				let savedSession: { session: AuthenticationSession | null | undefined } | undefined;
 
 				const setSession = (session: AuthenticationSession | null | undefined) => {
@@ -376,7 +375,7 @@ export class SubscriptionService implements Disposable {
 	}
 
 	@gate()
-	@log()
+	@debug()
 	async continueFeaturePreview(feature: FeaturePreviews): Promise<void> {
 		const preview = this.getStoredFeaturePreview(feature);
 		const status = getFeaturePreviewStatus(preview);
@@ -424,7 +423,7 @@ export class SubscriptionService implements Disposable {
 		return featurePreviews.map(f => this.getStoredFeaturePreview(f));
 	}
 
-	@debug()
+	@trace()
 	async learnAboutPro(source: Source, originalSource: Source | undefined): Promise<void> {
 		if (originalSource != null) {
 			source.detail = {
@@ -486,13 +485,13 @@ export class SubscriptionService implements Disposable {
 				void this.resendVerification(source);
 			}
 		} else if (isSubscriptionPaid(this._subscription)) {
-			const learn: MessageItem | undefined = isWalkthroughSupported() ? { title: 'Learn More' } : undefined;
+			const learn: MessageItem = { title: 'Learn More' };
 			const confirm: MessageItem = { title: 'Continue', isCloseAffordance: true };
 			const result = await window.showInformationMessage(
 				`You are now on ${actual.name} and have full access to all GitLens Pro features.`,
 				{ modal: true },
 				confirm,
-				...(learn ? [learn] : []),
+				learn,
 			);
 
 			if (result === learn) {
@@ -501,7 +500,7 @@ export class SubscriptionService implements Disposable {
 		} else if (isSubscriptionTrial(this._subscription)) {
 			const days = getSubscriptionTimeRemaining(this._subscription, 'days') ?? 0;
 
-			const learn: MessageItem | undefined = isWalkthroughSupported() ? { title: 'Learn More' } : undefined;
+			const learn: MessageItem = { title: 'Learn More' };
 			const confirm: MessageItem = { title: 'Continue', isCloseAffordance: true };
 			const result = await window.showInformationMessage(
 				`Welcome to your ${effective.name} Trial.\n\nYou now have full access to all GitLens Pro features for ${
@@ -512,7 +511,7 @@ export class SubscriptionService implements Disposable {
 					detail: 'Your trial also includes access to the GitKraken DevEx platform, unleashing powerful Git visualization & productivity capabilities everywhere you work: IDE, desktop, browser, and terminal.',
 				},
 				confirm,
-				...(learn ? [learn] : []),
+				learn,
 			);
 
 			if (result === learn) {
@@ -520,9 +519,7 @@ export class SubscriptionService implements Disposable {
 			}
 		} else {
 			const upgrade: MessageItem = { title: 'Upgrade to Pro' };
-			const learn: MessageItem | undefined = isWalkthroughSupported()
-				? { title: 'Community vs. Pro' }
-				: undefined;
+			const learn: MessageItem = { title: 'Community vs. Pro' };
 			const confirm: MessageItem = { title: 'Continue', isCloseAffordance: true };
 			const result = await window.showInformationMessage(
 				`You are now on ${actual.name}.`,
@@ -531,7 +528,7 @@ export class SubscriptionService implements Disposable {
 					detail: 'You only have access to Pro features on publicly-hosted repos. For full access to all Pro features, please upgrade to GitLens Pro.',
 				},
 				upgrade,
-				...(learn ? [learn] : []),
+				learn,
 				confirm,
 			);
 
@@ -543,7 +540,7 @@ export class SubscriptionService implements Disposable {
 		}
 	}
 
-	@log()
+	@debug()
 	async loginOrSignUp(signUp: boolean, source: Source | undefined): Promise<boolean> {
 		if (!(await ensurePlusFeaturesEnabled())) return false;
 
@@ -590,12 +587,13 @@ export class SubscriptionService implements Disposable {
 		});
 		const loggedIn = Boolean(session);
 		if (loggedIn) {
+			void executeCommand('gitlens.ai.mcp.authCLI');
 			void this.showPlanMessage(options?.source);
 		}
 		return loggedIn;
 	}
 
-	@log()
+	@debug()
 	async logout(source: Source | undefined): Promise<void> {
 		if (this.container.telemetry.enabled) {
 			this.container.telemetry.sendEvent('subscription/action', { action: 'sign-out' }, source);
@@ -626,35 +624,35 @@ export class SubscriptionService implements Disposable {
 		this.changeSubscription(getCommunitySubscription(this._subscription), source);
 	}
 
-	@log()
+	@debug()
 	async manageAccount(source: Source | undefined): Promise<boolean> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		if (this.container.telemetry.enabled) {
 			this.container.telemetry.sendEvent('subscription/action', { action: 'manage' }, source);
 		}
 
 		try {
 			const exchangeToken = await this.container.accountAuthentication.getExchangeToken();
-			return await openUrl(this.container.urls.getGkDevUrl('account', `token=${exchangeToken}`));
+			return await openUrl(await this.container.urls.getGkDevUrl('account', `token=${exchangeToken}`));
 		} catch (ex) {
-			Logger.error(ex, scope);
-			return openUrl(this.container.urls.getGkDevUrl('account'));
+			scope?.error(ex);
+			return openUrl(await this.container.urls.getGkDevUrl('account'));
 		}
 	}
 
-	@log()
+	@debug()
 	async manageSubscription(source: Source | undefined): Promise<boolean> {
 		if (this.container.telemetry.enabled) {
 			this.container.telemetry.sendEvent('subscription/action', { action: 'manage-subscription' }, source);
 		}
 
-		return openUrl(this.container.urls.getGkDevUrl('subscription/edit'));
+		return openUrl(await this.container.urls.getGkDevUrl('subscription/edit'));
 	}
 
 	@gate(() => '')
-	@log()
+	@debug()
 	async reactivateProTrial(source: Source | undefined): Promise<void> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		if (!(await ensurePlusFeaturesEnabled())) return;
 
@@ -699,7 +697,7 @@ export class SubscriptionService implements Disposable {
 				`Unable to reactivate trial. Please try again. If this issue persists, please contact support.`,
 				'OK',
 			);
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return;
 		}
 
@@ -726,26 +724,26 @@ export class SubscriptionService implements Disposable {
 				}
 			}
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 		}
 	}
 
-	@log()
+	@debug()
 	async referFriend(source: Source | undefined): Promise<void> {
 		if (this.container.telemetry.enabled) {
 			this.container.telemetry.sendEvent('subscription/action', { action: 'refer-friend' }, source);
 		}
 
-		await openUrl(this.container.urls.getGkDevUrl(undefined, 'referral_portal=true&source=gitlens'));
+		await openUrl(await this.container.urls.getGkDevUrl(undefined, 'referral_portal=true'));
 	}
 
 	@gate(() => '')
-	@log()
+	@debug()
 	async resendVerification(source: Source | undefined): Promise<boolean> {
 		if (this._subscription.account?.verified) return true;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		if (this.container.telemetry.enabled) {
 			this.container.telemetry.sendEvent('subscription/action', { action: 'resend-verification' }, source);
@@ -791,7 +789,7 @@ export class SubscriptionService implements Disposable {
 				return true;
 			}
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 
 			void window.showErrorMessage('Unable to resend verification email', 'OK');
@@ -812,7 +810,7 @@ export class SubscriptionService implements Disposable {
 		void configuration.updateEffective('plusFeatures.enabled', visible);
 	}
 
-	@log()
+	@debug()
 	async showAccountView(silent: boolean = false): Promise<void> {
 		if (silent && !configuration.get('plusFeatures.enabled', undefined, true)) return;
 
@@ -821,7 +819,7 @@ export class SubscriptionService implements Disposable {
 		}
 	}
 
-	@log()
+	@debug()
 	private showPlans(source: Source | undefined): void {
 		if (this.container.telemetry.enabled) {
 			this.container.telemetry.sendEvent('subscription/action', { action: 'pricing' }, source);
@@ -830,9 +828,9 @@ export class SubscriptionService implements Disposable {
 		void openUrl(urls.pricing);
 	}
 
-	@log()
+	@debug()
 	async upgrade(plan: PaidSubscriptionPlanIds | undefined, source: Source | undefined): Promise<boolean> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		if (!(await ensurePlusFeaturesEnabled())) return false;
 
@@ -876,7 +874,6 @@ export class SubscriptionService implements Disposable {
 		}
 
 		const query = new URLSearchParams();
-		query.set('source', 'gitlens');
 		query.set('product', 'gitlens');
 		query.set('planType', getSubscriptionPlanType(plan));
 
@@ -902,7 +899,7 @@ export class SubscriptionService implements Disposable {
 					);
 					query.set('token', token);
 				} catch (ex) {
-					Logger.error(ex, scope);
+					scope?.error(ex);
 				}
 			}
 
@@ -913,10 +910,10 @@ export class SubscriptionService implements Disposable {
 				query.set('success_uri', successUri.toString(true));
 			}
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 		}
 
-		aborted = !(await openUrl(this.container.urls.getGkDevUrl('purchase/checkout', query)));
+		aborted = !(await openUrl(await this.container.urls.getGkDevUrl('purchase/checkout', query)));
 
 		if (aborted) {
 			return false;
@@ -924,7 +921,7 @@ export class SubscriptionService implements Disposable {
 
 		telemetry?.dispose();
 
-		const completionPromises = [new Promise<boolean>(resolve => setTimeout(() => resolve(false), 5 * 60 * 1000))];
+		const completionPromises = [new Promise<boolean>(resolve => setTimeout(resolve, 5 * 60 * 1000, false))];
 
 		if (hasAccount) {
 			completionPromises.push(
@@ -958,9 +955,9 @@ export class SubscriptionService implements Disposable {
 	}
 
 	@gate<SubscriptionService['validate']>(o => `${o?.force ?? false}`)
-	@log()
+	@debug()
 	async validate(options?: { force?: boolean }, source?: Source | undefined): Promise<void> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const session = await this.ensureSession(false, source);
 		if (session == null) {
@@ -971,20 +968,20 @@ export class SubscriptionService implements Disposable {
 		try {
 			await this.checkInAndValidate(session, source, options);
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 		}
 	}
 
 	private _lastValidatedDate: Date | undefined;
 
-	@debug<SubscriptionService['checkInAndValidate']>({ args: { 0: s => s?.account?.label } })
+	@trace({ args: session => ({ session: session?.account?.label }) })
 	private async checkInAndValidate(
 		session: AuthenticationSession,
 		source: Source | undefined,
 		options?: { force?: boolean; showSlowProgress?: boolean; organizationId?: string },
 	): Promise<GKCheckInResponse | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		// Only check in if we haven't in the last 12 hours
 		if (
@@ -993,7 +990,7 @@ export class SubscriptionService implements Disposable {
 			Date.now() - this._lastValidatedDate.getTime() < 12 * 60 * 60 * 1000 &&
 			!isSubscriptionExpired(this._subscription)
 		) {
-			setLogScopeExit(scope, ` (${fromNow(this._lastValidatedDate.getTime(), true)})...`, 'skipped');
+			scope?.addExitInfo(fromNow(this._lastValidatedDate.getTime(), true), 'skipped');
 			return;
 		}
 
@@ -1013,14 +1010,14 @@ export class SubscriptionService implements Disposable {
 	}
 
 	@gate<SubscriptionService['checkInAndValidateCore']>((s, _, orgId) => `${s.account.id}:${orgId}`)
-	@debug<SubscriptionService['checkInAndValidateCore']>({ args: { 0: s => s?.account?.label } })
+	@trace({ args: session => ({ session: session?.account?.label }) })
 	private async checkInAndValidateCore(
 		session: AuthenticationSession,
 		source: Source | undefined,
 		organizationId?: string,
 		force?: boolean,
 	): Promise<GKCheckInResponse | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		this._lastValidatedDate = undefined;
 
 		try {
@@ -1060,7 +1057,7 @@ export class SubscriptionService implements Disposable {
 		} catch (ex) {
 			this._getCheckInData = () => Promise.resolve(undefined);
 
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 
 			// If we cannot check in, validate stored subscription
@@ -1081,7 +1078,7 @@ export class SubscriptionService implements Disposable {
 		// Check 4 times a day to ensure we validate at least once a day
 		this._validationTimer = setInterval(
 			() => {
-				if (this._lastValidatedDate == null || this._lastValidatedDate.getDate() !== new Date().getDate()) {
+				if (this._lastValidatedDate?.getDate() !== new Date().getDate()) {
 					void this.ensureSession(false, undefined, { force: true });
 				}
 			},
@@ -1101,8 +1098,10 @@ export class SubscriptionService implements Disposable {
 			.catch();
 	}
 
+	@trace()
 	private async loadStoredCheckInData(userId: string): Promise<GKCheckInResponse | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
+
 		const storedCheckIn = this.container.storage.get(`gk:${userId}:checkin`);
 		// If more than a day old, ignore
 		if (storedCheckIn?.timestamp == null || Date.now() - storedCheckIn.timestamp > 24 * 60 * 60 * 1000) {
@@ -1113,7 +1112,7 @@ export class SubscriptionService implements Disposable {
 			try {
 				return await this.checkInAndValidate(session, undefined, { force: true });
 			} catch (ex) {
-				Logger.error(ex, scope);
+				scope?.error(ex);
 				return undefined;
 			}
 		}
@@ -1121,13 +1120,13 @@ export class SubscriptionService implements Disposable {
 		return storedCheckIn?.data;
 	}
 
-	@debug()
+	@trace()
 	private async validateAndUpdateSubscriptions(
 		data: GKCheckInResponse,
 		session: AuthenticationSession,
 		source: Source | undefined,
 	): Promise<void> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		let organizations: Organization[];
 		try {
 			organizations =
@@ -1137,7 +1136,7 @@ export class SubscriptionService implements Disposable {
 					userId: session.account.id,
 				})) ?? [];
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			organizations = [];
 		}
 		let chosenOrganizationId = getConfiguredActiveOrganizationId();
@@ -1163,7 +1162,7 @@ export class SubscriptionService implements Disposable {
 	private _session: AuthenticationSession | null | undefined;
 
 	@gate()
-	@debug()
+	@trace()
 	private async ensureSession(
 		createIfNeeded: boolean,
 		source: Source | undefined,
@@ -1204,13 +1203,13 @@ export class SubscriptionService implements Disposable {
 		return session ?? undefined;
 	}
 
-	@debug()
+	@trace()
 	private async getOrCreateSession(
 		createIfNeeded: boolean,
 		source: Source | undefined,
 		options?: { signUp?: boolean; signIn?: { code: string; state?: string }; context?: TrackingContext },
 	): Promise<AuthenticationSession | null> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		let session: AuthenticationSession | null | undefined;
 		try {
@@ -1228,16 +1227,16 @@ export class SubscriptionService implements Disposable {
 			}
 
 			if (ex instanceof Error && ex.message.includes('User did not consent')) {
-				setLogScopeExit(scope, ' \u2022 User declined authentication');
+				scope?.addExitInfo('User declined authentication');
 				await this.logoutCore(source);
 				return null;
 			}
 
-			Logger.error(ex, scope);
+			scope?.error(ex);
 		}
 
 		if (session == null) {
-			setLogScopeExit(scope, ' \u2022 No valid session was found');
+			scope?.addExitInfo('No valid session was found');
 			await this.logoutCore(source);
 			return session ?? null;
 		}
@@ -1245,7 +1244,7 @@ export class SubscriptionService implements Disposable {
 		try {
 			await this.checkInAndValidate(session, source, { showSlowProgress: createIfNeeded, force: createIfNeeded });
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 
 			this.container.telemetry.sendEvent('account/validation/failed', {
@@ -1255,11 +1254,8 @@ export class SubscriptionService implements Disposable {
 				statusCode: ex.statusCode,
 			});
 
-			setLogScopeExit(
-				scope,
-				` \u2022 Account validation failed (${ex.statusCode ?? ex.original?.code})`,
-				'FAILED',
-			);
+			scope?.addExitInfo(`Account validation failed (${ex.statusCode ?? ex.original?.code})`);
+			scope?.setFailed('FAILED');
 
 			if (ex instanceof AccountValidationError) {
 				const name = session.account.label;
@@ -1316,22 +1312,20 @@ export class SubscriptionService implements Disposable {
 		return session;
 	}
 
-	@debug()
+	@trace()
 	private changeSubscription(
 		subscription: Optional<Subscription, 'state'> | undefined,
 		source: Source | undefined,
 		options?: { silent?: boolean; store?: boolean },
 	): void {
-		if (subscription == null) {
-			subscription = {
-				plan: {
-					actual: getSubscriptionPlan('community', false, 0, undefined),
-					effective: getSubscriptionPlan('community', false, 0, undefined),
-				},
-				account: undefined,
-				state: SubscriptionState.Community,
-			};
-		}
+		subscription ??= {
+			plan: {
+				actual: getSubscriptionPlan('community', false, 0, undefined),
+				effective: getSubscriptionPlan('community', false, 0, undefined),
+			},
+			account: undefined,
+			state: SubscriptionState.Community,
+		};
 
 		// If the effective plan has expired, then replace it with the actual plan
 		if (isSubscriptionExpired(subscription)) {
@@ -1444,9 +1438,7 @@ export class SubscriptionService implements Disposable {
 
 	private updateContext(): void {
 		this._updateAccessContextDebounced?.cancel();
-		if (this._updateAccessContextDebounced == null) {
-			this._updateAccessContextDebounced = debounce(this.updateAccessContext.bind(this), 500);
-		}
+		this._updateAccessContextDebounced ??= debounce(this.updateAccessContext.bind(this), 500);
 
 		if (this._cancellationSource != null) {
 			this._cancellationSource.cancel();
@@ -1491,9 +1483,14 @@ export class SubscriptionService implements Disposable {
 			}
 		}
 
-		void setContext('gitlens:plus:disabled', !plusEnabled && !allowed);
+		const plusDisabled = !plusEnabled && !allowed;
+		void setContext('gitlens:plus:disabled', plusDisabled);
 		void setContext('gitlens:plus:required', allowed === false);
 		void setContext('gitlens:plus:disallowedRepos', disallowedRepos);
+
+		if (!plusDisabled) {
+			void setContext('gitlens:plus:disabled:view:overrides', undefined);
+		}
 	}
 
 	private updateStatusBar(): void {
@@ -1517,12 +1514,10 @@ export class SubscriptionService implements Disposable {
 			return;
 		}
 
-		if (this._statusBarSubscription == null) {
-			this._statusBarSubscription = window.createStatusBarItem(
-				'gitlens.plus.subscription',
-				StatusBarAlignment.Right,
-			);
-		}
+		this._statusBarSubscription ??= window.createStatusBarItem(
+			'gitlens.plus.subscription',
+			StatusBarAlignment.Right,
+		);
 
 		this._statusBarSubscription.name = 'GitLens Pro';
 		this._statusBarSubscription.text = '$(gitlens-gitlens)';
@@ -1537,7 +1532,7 @@ export class SubscriptionService implements Disposable {
 			this._statusBarSubscription.tooltip = new MarkdownString(
 				trial
 					? `**GitLens Pro — verify your email**\n\nYou must verify your email before you can start your **${effective.name}** trial.`
-					: `**GitLens Pro — verify your email**\n\nYou must verify your email before you can use Pro features on privately-hosted repos.`,
+					: `**GitLens Pro — verify your email**\n\nYou must verify your email before you can unlock Pro features.`,
 				true,
 			);
 		} else {
@@ -1561,8 +1556,9 @@ export class SubscriptionService implements Disposable {
 		this._statusBarSubscription.show();
 	}
 
+	@debug()
 	async switchOrganization(source: Source | undefined): Promise<void> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		if (this._session == null) return;
 
 		let organizations;
@@ -1570,7 +1566,7 @@ export class SubscriptionService implements Disposable {
 			organizations = await this.container.organizations.getOrganizations();
 		} catch (ex) {
 			debugger;
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return;
 		}
 
@@ -1592,7 +1588,7 @@ export class SubscriptionService implements Disposable {
 			return;
 		}
 
-		if (currentActiveOrganization != null && pick.org.id === currentActiveOrganization.id) {
+		if (pick.org.id === currentActiveOrganization?.id) {
 			return;
 		}
 
@@ -1600,7 +1596,7 @@ export class SubscriptionService implements Disposable {
 			await this.checkInAndValidate(this._session, source, { force: true, organizationId: pick.org.id });
 		} catch (ex) {
 			debugger;
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return;
 		}
 
@@ -1623,8 +1619,10 @@ export class SubscriptionService implements Disposable {
 		);
 	}
 
-	private onLoginUri(uri: Uri): void {
-		const scope = getLogScope();
+	@info()
+	private onLoginUriReceived(uri: Uri): void {
+		const scope = getScopedLogger();
+
 		const queryParams = new URLSearchParams(uri.query);
 		const code = queryParams.get('code');
 		const state = queryParams.get('state');
@@ -1638,7 +1636,7 @@ export class SubscriptionService implements Disposable {
 		}
 
 		if (code == null) {
-			Logger.error(undefined, scope, `No code provided. Link: ${uri.toString(true)}`);
+			scope?.error(undefined, `No code provided. Link: ${uri.toString(true)}`);
 			void window.showErrorMessage(
 				`Unable to ${contextMessage} with that link. Please try clicking the link again. If this issue persists, please contact support.`,
 			);
@@ -1649,14 +1647,14 @@ export class SubscriptionService implements Disposable {
 	}
 
 	async checkUpdatedSubscription(source: Source | undefined): Promise<SubscriptionState | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		if (this._session == null) return undefined;
 		const oldSubscriptionState = this._subscription.state;
 		try {
 			await this.checkInAndValidate(this._session, source, { force: true });
 		} catch (ex) {
 			debugger;
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return undefined;
 		}
 
@@ -1667,31 +1665,31 @@ export class SubscriptionService implements Disposable {
 		return this._subscription.state;
 	}
 
-	@log()
+	@debug()
 	async aiAllAccessOptIn(source: Source | undefined): Promise<boolean> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		if (!(await ensurePlusFeaturesEnabled())) return false;
 
 		const hasAccount = this._session != null;
 
 		const query = new URLSearchParams();
-		query.set('source', 'gitlens');
 		query.set('product', 'gitlens');
 
 		try {
 			if (hasAccount) {
 				try {
-					const token = await this.container.accountAuthentication.getExchangeToken(
-						AiAllAccessOptInPathPrefix,
-					);
+					const token =
+						await this.container.accountAuthentication.getExchangeToken(AiAllAccessOptInPathPrefix);
 					query.set('token', token);
 				} catch (ex) {
-					Logger.error(ex, scope);
+					scope?.error(ex);
 				}
 			} else {
 				const callbackUri = await env.asExternalUri(
-					Uri.parse(`${env.uriScheme}://${this.container.context.extension.id}/${AiAllAccessOptInPathPrefix}`),
+					Uri.parse(
+						`${env.uriScheme}://${this.container.context.extension.id}/${AiAllAccessOptInPathPrefix}`,
+					),
 				);
 				query.set('redirect_uri', callbackUri.toString(true));
 			}
@@ -1700,24 +1698,30 @@ export class SubscriptionService implements Disposable {
 				this.container.telemetry.sendEvent('aiAllAccess/opened', undefined, source);
 			}
 
-			if(!(await openUrl(this.container.urls.getGkDevUrl('all-access', query)))) {
+			if (!(await openUrl(await this.container.urls.getGkDevUrl('all-access', query)))) {
 				return false;
 			}
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return false;
 		}
 
 		const completionPromises = [
-			new Promise<string>(resolve => setTimeout(() => resolve('cancel'), 5 * 60 * 1000)),
-			new Promise<string>(resolve => once(this.container.uri.onDidReceiveAiAllAccessOptInUri)(() => resolve(hasAccount ? 'update' : 'login'))),
+			new Promise<string>(resolve => setTimeout(resolve, 5 * 60 * 1000, 'cancel')),
+			new Promise<string>(resolve =>
+				once(this.container.uri.onDidReceiveAiAllAccessOptInUri)(() =>
+					resolve(hasAccount ? 'update' : 'login'),
+				),
+			),
 		];
 
 		const action = await Promise.race(completionPromises);
 
 		if (action === 'update' && hasAccount) {
 			void this.checkUpdatedSubscription(source);
-			void this.container.storage.store(`gk:promo:${this._session?.account.id ?? '00000000'}:ai:allAccess:dismissed`, true).catch();
+			void this.container.storage
+				.store(`gk:promo:${this._session?.account.id ?? '00000000'}:ai:allAccess:dismissed`, true)
+				.catch();
 			void this.container.views.home.refresh();
 		}
 
@@ -1743,7 +1747,9 @@ export class SubscriptionService implements Disposable {
 			await this.loginWithCode({ code: code }, { source: 'subscription' });
 			const newSession = await this.getAuthenticationSession();
 			if (newSession?.account?.id != null) {
-				await this.container.storage.store(`gk:promo:${newSession.account.id}:ai:allAccess:dismissed`, true).catch();
+				await this.container.storage
+					.store(`gk:promo:${newSession.account.id}:ai:allAccess:dismissed`, true)
+					.catch();
 				void this.container.views.home.refresh();
 			}
 		}
@@ -1813,6 +1819,8 @@ function flattenSubscriptionFeaturePreviews(previews: FeaturePreview[]): Subscri
 
 function getTrackingContextFromSource(source: Source | undefined): TrackingContext | undefined {
 	switch (source?.source) {
+		case 'deeplink':
+			return source.detail === 'mcp' ? 'mcp' : undefined;
 		case 'graph':
 			return 'graph';
 		case 'launchpad':

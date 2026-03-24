@@ -1,32 +1,31 @@
 import type { Selection } from 'vscode';
 import { Disposable, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import type { GitUri } from '../../git/gitUri';
-import type { GitBranch } from '../../git/models/branch';
-import type { GitFile } from '../../git/models/file';
-import { GitFileIndexStatus } from '../../git/models/fileStatus';
-import type { GitLog } from '../../git/models/log';
-import type { RepositoryChangeEvent, RepositoryFileSystemChangeEvent } from '../../git/models/repository';
-import { RepositoryChange, RepositoryChangeComparisonMode } from '../../git/models/repository';
-import { deletedOrMissing } from '../../git/models/revision';
-import { getBranchAheadRange } from '../../git/utils/-webview/branch.utils';
-import { isUncommitted } from '../../git/utils/revision.utils';
-import { gate } from '../../system/decorators/-webview/gate';
-import { memoize } from '../../system/decorators/-webview/memoize';
-import { debug } from '../../system/decorators/log';
-import { weakEvent } from '../../system/event';
-import { filterMap, find } from '../../system/iterable';
-import { getLoggableName, Logger } from '../../system/logger';
-import { startLogScope } from '../../system/logger.scope';
-import { getSettledValue } from '../../system/promise';
-import type { FileHistoryView } from '../fileHistoryView';
-import type { LineHistoryView } from '../lineHistoryView';
-import { SubscribeableViewNode } from './abstract/subscribeableViewNode';
-import type { PageableViewNode, ViewNode } from './abstract/viewNode';
-import { ContextValues, getViewNodeId } from './abstract/viewNode';
-import { LoadMoreNode, MessageNode } from './common';
-import { FileRevisionAsCommitNode } from './fileRevisionAsCommitNode';
-import { LineHistoryTrackerNode } from './lineHistoryTrackerNode';
-import { insertDateMarkers } from './utils/-webview/node.utils';
+import type { GitUri } from '../../git/gitUri.js';
+import type { GitBranch } from '../../git/models/branch.js';
+import type { GitFile } from '../../git/models/file.js';
+import { GitFileIndexStatus } from '../../git/models/fileStatus.js';
+import type { GitLog } from '../../git/models/log.js';
+import type { RepositoryChangeEvent, RepositoryFileSystemChangeEvent } from '../../git/models/repository.js';
+import { deletedOrMissing } from '../../git/models/revision.js';
+import { getBranchAheadRange } from '../../git/utils/-webview/branch.utils.js';
+import { isUncommitted } from '../../git/utils/revision.utils.js';
+import { gate } from '../../system/decorators/gate.js';
+import { trace } from '../../system/decorators/log.js';
+import { memoize } from '../../system/decorators/memoize.js';
+import { weakEvent } from '../../system/event.js';
+import { filterMap, find } from '../../system/iterable.js';
+import { getLoggableName } from '../../system/logger.js';
+import { maybeStartScopedLogger } from '../../system/logger.scope.js';
+import { getSettledValue } from '../../system/promise.js';
+import type { FileHistoryView } from '../fileHistoryView.js';
+import type { LineHistoryView } from '../lineHistoryView.js';
+import { SubscribeableViewNode } from './abstract/subscribeableViewNode.js';
+import type { PageableViewNode, ViewNode } from './abstract/viewNode.js';
+import { ContextValues, getViewNodeId } from './abstract/viewNode.js';
+import { LoadMoreNode, MessageNode } from './common.js';
+import { FileRevisionAsCommitNode } from './fileRevisionAsCommitNode.js';
+import { LineHistoryTrackerNode } from './lineHistoryTrackerNode.js';
+import { insertDateMarkers } from './utils/-webview/node.utils.js';
 
 export class LineHistoryNode
 	extends SubscribeableViewNode<'line-history', FileHistoryView | LineHistoryView>
@@ -65,7 +64,7 @@ export class LineHistoryNode
 	}
 
 	async getChildren(): Promise<ViewNode[]> {
-		this.view.description = `${this.view.groupedLabel ? `${this.view.groupedLabel}: ` : ''}${this.label}${
+		this.view.description = `${this.label}${
 			this.parent instanceof LineHistoryTrackerNode && !this.parent.followingEditor ? ' (pinned)' : ''
 		}`;
 
@@ -81,8 +80,8 @@ export class LineHistoryNode
 			this.getLog(selection),
 			sha == null || isUncommitted(sha)
 				? this.editorContents
-					? await this.view.container.git.getBlameForRangeContents(this.uri, selection, this.editorContents)
-					: await this.view.container.git.getBlameForRange(this.uri, selection)
+					? this.view.container.git.getBlameForRangeContents(this.uri, selection, this.editorContents)
+					: this.view.container.git.getBlameForRange(this.uri, selection)
 				: undefined,
 			svc.getBranchesAndTagsTipsLookup(this.branch?.name),
 			range ? svc.commits.getLogShas(range, { limit: 0 }) : undefined,
@@ -144,7 +143,7 @@ export class LineHistoryNode
 			);
 
 			if (log.hasMore) {
-				children.push(new LoadMoreNode(this.view, this, children[children.length - 1]));
+				children.push(new LoadMoreNode(this.view, this, children.at(-1)!));
 			}
 		}
 
@@ -161,7 +160,7 @@ export class LineHistoryNode
 			this.uri.sha == null ? '' : `\n\n${this.uri.sha}`
 		}`;
 
-		this.view.description = `${this.view.groupedLabel ? `${this.view.groupedLabel}: ` : ''}${label}${
+		this.view.description = `${label}${
 			this.parent instanceof LineHistoryTrackerNode && !this.parent.followingEditor ? ' (pinned)' : ''
 		}`;
 
@@ -181,7 +180,7 @@ export class LineHistoryNode
 			: `:${this.selection.start.line + 1}-${this.selection.end.line + 1}`;
 	}
 
-	@debug()
+	@trace()
 	protected subscribe(): Disposable | undefined {
 		const repo = this.view.container.git.getRepository(this.uri);
 		if (repo == null) return undefined;
@@ -195,26 +194,16 @@ export class LineHistoryNode
 	}
 
 	protected override etag(): number {
-		return Date.now();
+		return this.view.container.git.getRepository(this.uri)?.etag ?? 0;
 	}
 
 	private onRepositoryChanged(e: RepositoryChangeEvent) {
-		if (
-			!e.changed(
-				RepositoryChange.Index,
-				RepositoryChange.Heads,
-				RepositoryChange.Remotes,
-				RepositoryChange.RemoteProviders,
-				RepositoryChange.PausedOperationStatus,
-				RepositoryChange.Unknown,
-				RepositoryChangeComparisonMode.Any,
-			)
-		) {
+		if (!e.changed('index', 'heads', 'remotes', 'remoteProviders', 'pausedOp', 'unknown')) {
 			return;
 		}
 
-		using scope = startLogScope(`${getLoggableName(this)}.onRepositoryChanged(e=${e.toString()})`, false);
-		Logger.debug(scope, 'triggering node refresh');
+		using scope = maybeStartScopedLogger(`${getLoggableName(this)}.onRepositoryChanged(e=${e.toString()})`);
+		scope?.trace('triggering node refresh');
 
 		void this.triggerChange(true);
 	}
@@ -222,16 +211,15 @@ export class LineHistoryNode
 	private onFileSystemChanged(e: RepositoryFileSystemChangeEvent) {
 		if (!e.uris.has(this.uri)) return;
 
-		using scope = startLogScope(
+		using scope = maybeStartScopedLogger(
 			`${getLoggableName(this)}.onFileSystemChanged(e=${this.uri.toString(true)})`,
-			false,
 		);
-		Logger.debug(scope, 'triggering node refresh');
+		scope?.trace('triggering node refresh');
 
 		void this.triggerChange(true);
 	}
 
-	@debug()
+	@trace()
 	override refresh(reset: boolean = false): void | { cancel: boolean } | Promise<void | { cancel: boolean }> {
 		if (reset) {
 			this._log = undefined;

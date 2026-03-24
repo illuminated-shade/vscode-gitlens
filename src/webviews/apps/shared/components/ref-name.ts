@@ -1,7 +1,7 @@
 import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import type { GitReference } from '../../../../git/models/reference';
-import './code-icon';
+import type { GitReference } from '../../../../git/models/reference.js';
+import './code-icon.js';
 
 @customElement('gl-ref-name')
 export class GlRefName extends LitElement {
@@ -55,7 +55,7 @@ export class GlRefName extends LitElement {
 		switch (this.ref.refType) {
 			case 'branch':
 				className = this.worktree ? 'worktree' : 'branch';
-				icon = this.worktree ? 'gl-worktrees-view' : 'git-branch';
+				icon = this.worktree ? 'gl-worktree' : 'git-branch';
 				break;
 			case 'tag':
 				className = 'tag';

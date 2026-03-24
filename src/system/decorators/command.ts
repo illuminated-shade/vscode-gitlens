@@ -1,6 +1,9 @@
+import type { GlCommands, GlWebviewCommands } from '../../constants.commands.js';
+import type { WebviewTypes } from '../../constants.views.js';
+
 interface Command<
-	THandler extends (...args: any[]) => any,
-	TCommand extends string = string,
+	TCommand extends string | GlCommands = GlCommands,
+	THandler extends (...args: any[]) => any = (...args: any[]) => any,
 	TOptions extends object | void = void,
 > {
 	command: TCommand;
@@ -9,8 +12,8 @@ interface Command<
 }
 
 export function createCommandDecorator<
+	TCommand extends string | GlCommands = GlCommands,
 	THandler extends (...args: any[]) => any = (...args: any[]) => any,
-	TCommand extends string = string,
 	TOptions extends object | void = void,
 >(): {
 	command: (
@@ -21,9 +24,9 @@ export function createCommandDecorator<
 		contextOrKey?: string | ClassMethodDecoratorContext,
 		descriptor?: PropertyDescriptor,
 	) => PropertyDescriptor | undefined;
-	getCommands: () => Iterable<Command<THandler, TCommand, TOptions>>;
+	getCommands: () => Iterable<Command<TCommand, THandler, TOptions>>;
 } {
-	const commands = new Map<string, Command<THandler, TCommand, TOptions>>();
+	const commands = new Map<string, Command<TCommand, THandler, TOptions>>();
 
 	function command(command: TCommand, options?: TOptions) {
 		return function (
@@ -65,4 +68,8 @@ export function createCommandDecorator<
 		command: command,
 		getCommands: () => commands.values(),
 	};
+}
+
+export function getWebviewCommand(command: string, type: WebviewTypes): GlWebviewCommands {
+	return (command.endsWith(':') ? `${command}${type}` : command) as GlWebviewCommands;
 }

@@ -1,33 +1,38 @@
 import type { CancellationToken, Command } from 'vscode';
 import { MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
-import type { DiffWithPreviousCommandArgs } from '../../commands/diffWithPrevious';
-import type { Colors } from '../../constants.colors';
-import { CommitFormatter } from '../../git/formatters/commitFormatter';
-import type { GitBranch } from '../../git/models/branch';
-import type { GitCommit } from '../../git/models/commit';
-import type { PullRequest } from '../../git/models/pullRequest';
-import type { GitRevisionReference } from '../../git/models/reference';
-import type { GitRemote } from '../../git/models/remote';
-import type { RemoteProvider } from '../../git/remotes/remoteProvider';
-import { createCommand } from '../../system/-webview/command';
-import { configuration } from '../../system/-webview/configuration';
-import { getContext } from '../../system/-webview/context';
-import { editorLineToDiffRange } from '../../system/-webview/vscode/editors';
-import { makeHierarchical } from '../../system/array';
-import { joinPaths, normalizePath } from '../../system/path';
-import type { Deferred } from '../../system/promise';
-import { defer, getSettledValue, pauseOnCancelOrTimeoutMapTuplePromise } from '../../system/promise';
-import { sortCompare } from '../../system/string';
-import type { FileHistoryView } from '../fileHistoryView';
-import type { ViewsWithCommits } from '../viewBase';
-import { disposeChildren } from '../viewBase';
-import type { ViewNode } from './abstract/viewNode';
-import { ContextValues, getViewNodeId } from './abstract/viewNode';
-import { ViewRefNode } from './abstract/viewRefNode';
-import { CommitFileNode } from './commitFileNode';
-import type { FileNode } from './folderNode';
-import { FolderNode } from './folderNode';
-import { PullRequestNode } from './pullRequestNode';
+import type { DiffWithPreviousCommandArgs } from '../../commands/diffWithPrevious.js';
+import type { Colors } from '../../constants.colors.js';
+import { CommitFormatter } from '../../git/formatters/commitFormatter.js';
+import type { GitBranch } from '../../git/models/branch.js';
+import type { GitCommit } from '../../git/models/commit.js';
+import type { PullRequest } from '../../git/models/pullRequest.js';
+import type { GitRevisionReference } from '../../git/models/reference.js';
+import type { GitRemote } from '../../git/models/remote.js';
+import type { RemoteProvider } from '../../git/remotes/remoteProvider.js';
+import { createCommand } from '../../system/-webview/command.js';
+import { configuration } from '../../system/-webview/configuration.js';
+import { getContext } from '../../system/-webview/context.js';
+import { editorLineToDiffRange } from '../../system/-webview/vscode/editors.js';
+import { makeHierarchical } from '../../system/array.js';
+import { joinPaths, normalizePath } from '../../system/path.js';
+import type { Deferred } from '../../system/promise.js';
+import {
+	defer,
+	getSettledValue,
+	pauseOnCancelOrTimeout,
+	pauseOnCancelOrTimeoutMapTuplePromise,
+} from '../../system/promise.js';
+import { sortCompare } from '../../system/string.js';
+import type { FileHistoryView } from '../fileHistoryView.js';
+import type { ViewsWithCommits } from '../viewBase.js';
+import { disposeChildren } from '../viewBase.js';
+import type { ViewNode } from './abstract/viewNode.js';
+import { ContextValues, getViewNodeId } from './abstract/viewNode.js';
+import { ViewRefNode } from './abstract/viewRefNode.js';
+import { CommitFileNode } from './commitFileNode.js';
+import type { FileNode } from './folderNode.js';
+import { FolderNode } from './folderNode.js';
+import { PullRequestNode } from './pullRequestNode.js';
 
 type State = {
 	pullRequest: PullRequest | null | undefined;
@@ -130,34 +135,38 @@ export class CommitNode extends ViewRefNode<'commit', ViewsWithCommits | FileHis
 				}
 			}
 
-			const commits = await commit.getCommitsForFiles({
-				allowFilteredFiles: this._options.allowFilteredFiles,
-				include: { stats: true },
-			});
-			for (const c of commits) {
-				children.push(new CommitFileNode(this.view, this, c.file!, c));
+			try {
+				const commits = await commit.getCommitsForFiles({
+					allowFilteredFiles: this._options.allowFilteredFiles,
+					include: { stats: true },
+				});
+				for (const c of commits) {
+					children.push(new CommitFileNode(this.view, this, c.file!, c));
+				}
+
+				if (this.view.config.files.layout !== 'list') {
+					const hierarchy = makeHierarchical(
+						children as FileNode[],
+						n => n.uri.relativePath.split('/'),
+						(...parts: string[]) => normalizePath(joinPaths(...parts)),
+						this.view.config.files.compact,
+					);
+
+					const root = new FolderNode(this.view, this, hierarchy, this.repoPath, '', undefined);
+					children = root.getChildren() as FileNode[];
+				} else {
+					(children as FileNode[]).sort((a, b) => sortCompare(a.label!, b.label!));
+				}
+
+				if (pullRequest != null) {
+					children.unshift(new PullRequestNode(this.view, this, pullRequest, commit));
+				}
+
+				this.children = children;
+			} finally {
+				// Always fulfill the deferred to prevent orphaned microtasks
+				setTimeout(() => onCompleted?.fulfill(), 1);
 			}
-
-			if (this.view.config.files.layout !== 'list') {
-				const hierarchy = makeHierarchical(
-					children as FileNode[],
-					n => n.uri.relativePath.split('/'),
-					(...parts: string[]) => normalizePath(joinPaths(...parts)),
-					this.view.config.files.compact,
-				);
-
-				const root = new FolderNode(this.view, this, hierarchy, this.repoPath, '', undefined);
-				children = root.getChildren() as FileNode[];
-			} else {
-				(children as FileNode[]).sort((a, b) => sortCompare(a.label!, b.label!));
-			}
-
-			if (pullRequest != null) {
-				children.unshift(new PullRequestNode(this.view, this, pullRequest, commit));
-			}
-
-			this.children = children;
-			setTimeout(() => onCompleted?.fulfill(), 1);
 		}
 
 		return this.children;
@@ -202,7 +211,7 @@ export class CommitNode extends ViewRefNode<'commit', ViewsWithCommits | FileHis
 
 	override getCommand(): Command | undefined {
 		return createCommand<[undefined, DiffWithPreviousCommandArgs]>(
-			'gitlens.diffWithPrevious',
+			'gitlens.diffWithPrevious:views',
 			'Open Changes with Previous Revision',
 			undefined,
 			{
@@ -251,7 +260,14 @@ export class CommitNode extends ViewRefNode<'commit', ViewsWithCommits | FileHis
 	}
 
 	private async getTooltip(cancellation: CancellationToken) {
-		const [remotesResult, _] = await Promise.allSettled([
+		const template = this.getTooltipTemplate();
+
+		const showSignature =
+			configuration.get('signing.showSignatureBadges') &&
+			!this.commit.isUncommitted &&
+			CommitFormatter.has(template, 'signature');
+
+		const [remotesResult, _, signatureResult] = await Promise.allSettled([
 			this.view.container.git
 				.getRepositoryService(this.commit.repoPath)
 				.remotes.getBestRemotesWithProviders(cancellation),
@@ -259,17 +275,19 @@ export class CommitNode extends ViewRefNode<'commit', ViewsWithCommits | FileHis
 				allowFilteredFiles: this._options.allowFilteredFiles,
 				include: { stats: true },
 			}),
+			showSignature ? pauseOnCancelOrTimeout(this.commit.isSigned(), cancellation) : undefined,
 		]);
 
 		if (cancellation.isCancellationRequested) return undefined;
 
 		const remotes = getSettledValue(remotesResult, []);
 		const [remote] = remotes;
+		const signature = getSettledValue(signatureResult);
 
 		let enrichedAutolinks;
 		let pr;
 
-		if (remote?.supportsIntegration()) {
+		if (!remote || remote?.supportsIntegration()) {
 			const [enrichedAutolinksResult, prResult] = await Promise.allSettled([
 				pauseOnCancelOrTimeoutMapTuplePromise(this.commit.getEnrichedAutolinks(remote), cancellation),
 				this.getAssociatedPullRequest(this.commit, remote),
@@ -284,17 +302,23 @@ export class CommitNode extends ViewRefNode<'commit', ViewsWithCommits | FileHis
 			pr = getSettledValue(prResult);
 		}
 
-		const tooltip = await CommitFormatter.fromTemplateAsync(this.getTooltipTemplate(), this.commit, {
-			enrichedAutolinks: enrichedAutolinks,
-			dateFormat: configuration.get('defaultDateFormat'),
-			getBranchAndTagTips: this.getBranchAndTagTips,
-			messageAutolinks: true,
-			messageIndent: 4,
-			pullRequest: pr,
-			outputFormat: 'markdown',
-			remotes: remotes,
-			unpublished: this.unpublished,
-		});
+		const tooltip = await CommitFormatter.fromTemplateAsync(
+			template,
+			this.commit,
+			{ source: 'view:hover' },
+			{
+				enrichedAutolinks: enrichedAutolinks,
+				dateFormat: configuration.get('defaultDateFormat'),
+				getBranchAndTagTips: this.getBranchAndTagTips,
+				messageAutolinks: true,
+				messageIndent: 4,
+				pullRequest: pr,
+				outputFormat: 'markdown',
+				remotes: remotes,
+				unpublished: this.unpublished,
+				signed: signature?.value === true,
+			},
+		);
 
 		const markdown = new MarkdownString(tooltip, true);
 		markdown.supportHtml = true;

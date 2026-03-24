@@ -1,10 +1,11 @@
 import type { HttpsProxyAgent } from 'https-proxy-agent';
 import type { CancellationToken, Disposable } from 'vscode';
 import { window } from 'vscode';
-import type { RequestInit, Response } from '@env/fetch';
-import { fetch, getProxyAgent, wrapForForcedInsecureSSL } from '@env/fetch';
-import { isWeb } from '@env/platform';
-import type { Container } from '../../../../container';
+import { base64 } from '@env/base64.js';
+import type { RequestInit, Response } from '@env/fetch.js';
+import { fetch, getProxyAgent, wrapForForcedInsecureSSL } from '@env/fetch.js';
+import { isWeb } from '@env/platform.js';
+import type { Container } from '../../../../container.js';
 import {
 	AuthenticationError,
 	AuthenticationErrorReason,
@@ -12,20 +13,20 @@ import {
 	ProviderFetchError,
 	RequestClientError,
 	RequestNotFoundError,
-} from '../../../../errors';
-import type { UnidentifiedAuthor } from '../../../../git/models/author';
-import type { Issue } from '../../../../git/models/issue';
-import type { IssueOrPullRequest } from '../../../../git/models/issueOrPullRequest';
-import type { PullRequest } from '../../../../git/models/pullRequest';
-import type { Provider } from '../../../../git/models/remoteProvider';
-import { showIntegrationRequestFailed500WarningMessage } from '../../../../messages';
-import { configuration } from '../../../../system/-webview/configuration';
-import { debug } from '../../../../system/decorators/log';
-import { Logger } from '../../../../system/logger';
-import type { LogScope } from '../../../../system/logger.scope';
-import { getLogScope } from '../../../../system/logger.scope';
-import { maybeStopWatch } from '../../../../system/stopwatch';
-import { base64 } from '../../../../system/string';
+} from '../../../../errors.js';
+import type { UnidentifiedAuthor } from '../../../../git/models/author.js';
+import type { Issue } from '../../../../git/models/issue.js';
+import type { IssueOrPullRequest, IssueOrPullRequestType } from '../../../../git/models/issueOrPullRequest.js';
+import type { PullRequest } from '../../../../git/models/pullRequest.js';
+import type { Provider } from '../../../../git/models/remoteProvider.js';
+import { showIntegrationRequestFailed500WarningMessage } from '../../../../messages.js';
+import { configuration } from '../../../../system/-webview/configuration.js';
+import { trace } from '../../../../system/decorators/log.js';
+import { Logger } from '../../../../system/logger.js';
+import type { ScopedLogger } from '../../../../system/logger.scope.js';
+import { getScopedLogger } from '../../../../system/logger.scope.js';
+import { maybeStopWatch } from '../../../../system/stopwatch.js';
+import type { TokenInfo, TokenWithInfo } from '../../authentication/models.js';
 import type {
 	AzureGitCommit,
 	AzureProjectDescriptor,
@@ -34,7 +35,7 @@ import type {
 	AzureWorkItemState,
 	AzureWorkItemStateCategory,
 	WorkItem,
-} from './models';
+} from './models.js';
 import {
 	azurePullRequestStatusToState,
 	azureWorkItemsStateCategoryToState,
@@ -43,7 +44,7 @@ import {
 	getAzurePullRequestWebUrl,
 	isClosedAzurePullRequestStatus,
 	isClosedAzureWorkItemStateCategory,
-} from './models';
+} from './models.js';
 
 export class AzureDevOpsApi implements Disposable {
 	private readonly _disposable: Disposable;
@@ -53,7 +54,7 @@ export class AzureDevOpsApi implements Disposable {
 		this._disposable = configuration.onDidChangeAny(e => {
 			if (
 				configuration.changedCore(e, ['http.proxy', 'http.proxyStrictSSL']) ||
-				configuration.changed(e, ['outputLevel', 'proxy'])
+				configuration.changed(e, 'proxy')
 			) {
 				this.resetCaches();
 			}
@@ -79,10 +80,18 @@ export class AzureDevOpsApi implements Disposable {
 		this._workItemStates.clear();
 	}
 
-	@debug<AzureDevOpsApi['getPullRequestForBranch']>({ args: { 0: p => p.name, 1: '<token>' } })
+	@trace({
+		args: (provider, token, owner, repo, branch) => ({
+			provider: provider.name,
+			token: `<token:${token.microHash}>`,
+			owner: owner,
+			repo: repo,
+			branch: branch,
+		}),
+	})
 	public async getPullRequestForBranch(
 		provider: Provider,
-		token: string,
+		token: TokenWithInfo,
 		owner: string,
 		repo: string,
 		branch: string,
@@ -90,7 +99,7 @@ export class AzureDevOpsApi implements Disposable {
 			baseUrl: string;
 		},
 	): Promise<PullRequest | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		const [projectName, _, repoName] = repo.split('/');
 
 		try {
@@ -98,27 +107,54 @@ export class AzureDevOpsApi implements Disposable {
 				provider,
 				token,
 				options?.baseUrl,
-				`${owner}/${projectName}/_apis/git/repositories/${repoName}/pullRequests`,
+				`${owner}/${projectName}/_apis/git/repositories/${repoName}/pullRequests?searchCriteria.status=all&searchCriteria.sourceRefName=refs/heads/${branch}`,
 				{
 					method: 'GET',
 				},
 				scope,
 			);
 
-			const pr = prResult?.value.find(pr => pr.sourceRefName.endsWith(branch));
+			// Sort PRs: open PRs first, then by most recent activity (creation or closure date)
+			const sortedPRs = prResult?.value.sort((a, b) => {
+				// First, prioritize open PRs (active/notSet) over closed ones (abandoned/completed)
+				const aIsOpen = a.status === 'active' || a.status === 'notSet';
+				const bIsOpen = b.status === 'active' || b.status === 'notSet';
+
+				if (aIsOpen !== bIsOpen) {
+					return aIsOpen ? -1 : 1; // Open PRs come first
+				}
+
+				// Among PRs with the same status, sort by most recent activity
+				// Use closedDate if available, otherwise use creationDate
+				const aDate = new Date(a.closedDate || a.creationDate);
+				const bDate = new Date(b.closedDate || b.creationDate);
+
+				return bDate.getTime() - aDate.getTime(); // Most recent first
+			});
+
+			const pr = sortedPRs?.[0];
 			if (pr == null) return undefined;
 
 			return fromAzurePullRequest(pr, provider, owner);
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return undefined;
 		}
 	}
 
-	@debug<AzureDevOpsApi['getPullRequestForCommit']>({ args: { 0: p => p.name, 1: '<token>' } })
+	@trace({
+		args: (provider, token, owner, repo, rev, baseUrl) => ({
+			provider: provider.name,
+			token: `<token:${token.microHash}>`,
+			owner: owner,
+			repo: repo,
+			rev: rev,
+			baseUrl: baseUrl,
+		}),
+	})
 	async getPullRequestForCommit(
 		provider: Provider,
-		token: string,
+		token: TokenWithInfo,
 		owner: string,
 		repo: string,
 		rev: string,
@@ -128,14 +164,14 @@ export class AzureDevOpsApi implements Disposable {
 		},
 		cancellation?: CancellationToken,
 	): Promise<PullRequest | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		const [projectName, _, repoName] = repo.split('/');
 		try {
 			const prResult = await this.request<{ results: Record<string, AzurePullRequest[]>[] }>(
 				provider,
 				token,
 				baseUrl,
-				`${owner}/${projectName}/_apis/git/repositories/${repoName}/pullrequestquery?api-version=7.1`,
+				`${owner}/${projectName}/_apis/git/repositories/${repoName}/pullrequestquery?api-version=4.1`,
 				{
 					method: 'POST',
 					body: JSON.stringify({
@@ -167,116 +203,139 @@ export class AzureDevOpsApi implements Disposable {
 
 			return fromAzurePullRequest(pullRequest, provider, owner);
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return undefined;
 		}
 	}
 
-	@debug<AzureDevOpsApi['getIssueOrPullRequest']>({ args: { 0: p => p.name, 1: '<token>' } })
+	@trace({
+		args: (provider, token, owner, repo, id) => ({
+			provider: provider.name,
+			token: `<token:${token.microHash}>`,
+			owner: owner,
+			repo: repo,
+			id: id,
+		}),
+	})
 	public async getIssueOrPullRequest(
 		provider: Provider,
-		token: string,
+		token: TokenWithInfo,
 		owner: string,
 		repo: string,
 		id: string,
 		options: {
 			baseUrl: string;
+			type?: IssueOrPullRequestType;
 		},
 	): Promise<IssueOrPullRequest | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		const [projectName, _, repoName] = repo.split('/');
 
-		try {
-			// Try to get the Work item (wit) first with specific fields
-			const issueResult = await this.request<WorkItem>(
-				provider,
-				token,
-				options?.baseUrl,
-				`${owner}/${projectName}/_apis/wit/workItems/${id}`,
-				{
-					method: 'GET',
-				},
-				scope,
-			);
-
-			if (issueResult != null) {
-				const issueType = issueResult.fields['System.WorkItemType'];
-				const state = issueResult.fields['System.State'];
-				const stateCategory = await this.getWorkItemStateCategory(
-					issueType,
-					state,
+		if (options?.type === undefined || options?.type === 'issue') {
+			try {
+				// Try to get the Work item (wit) first with specific fields
+				const issueResult = await this.request<WorkItem>(
 					provider,
 					token,
-					owner,
-					projectName,
-					options,
+					options?.baseUrl,
+					`${owner}/${projectName}/_apis/wit/workItems/${id}`,
+					{
+						method: 'GET',
+					},
+					scope,
 				);
 
-				return {
-					id: issueResult.id.toString(),
-					type: 'issue',
-					nodeId: issueResult.id.toString(),
-					provider: provider,
-					createdDate: new Date(issueResult.fields['System.CreatedDate']),
-					updatedDate: new Date(issueResult.fields['System.ChangedDate']),
-					state: azureWorkItemsStateCategoryToState(stateCategory),
-					closed: isClosedAzureWorkItemStateCategory(stateCategory),
-					title: issueResult.fields['System.Title'],
-					url: issueResult._links.html.href,
-				};
+				if (issueResult != null) {
+					const issueType = issueResult.fields['System.WorkItemType'];
+					const state = issueResult.fields['System.State'];
+					const stateCategory = await this.getWorkItemStateCategory(
+						issueType,
+						state,
+						provider,
+						token,
+						owner,
+						projectName,
+						options,
+					);
+
+					return {
+						id: issueResult.id.toString(),
+						type: 'issue',
+						nodeId: issueResult.id.toString(),
+						provider: provider,
+						createdDate: new Date(issueResult.fields['System.CreatedDate']),
+						updatedDate: new Date(issueResult.fields['System.ChangedDate']),
+						state: azureWorkItemsStateCategoryToState(stateCategory),
+						closed: isClosedAzureWorkItemStateCategory(stateCategory),
+						title: issueResult.fields['System.Title'],
+						url: issueResult._links.html.href,
+					};
+				}
+			} catch (ex) {
+				if (ex.original?.status !== 404) {
+					scope?.error(ex);
+					return undefined;
+				}
 			}
-		} catch (ex) {
-			if (ex.original?.status !== 404) {
-				Logger.error(ex, scope);
+		}
+
+		if (options?.type === undefined || options?.type === 'pullrequest') {
+			try {
+				const prResult = await this.request<AzurePullRequestWithLinks>(
+					provider,
+					token,
+					options?.baseUrl,
+					`${owner}/${projectName}/_apis/git/repositories/${repoName}/pullRequests/${id}`,
+					{
+						method: 'GET',
+					},
+					scope,
+				);
+
+				if (prResult != null) {
+					return {
+						id: prResult.pullRequestId.toString(),
+						type: 'pullrequest',
+						nodeId: prResult.pullRequestId.toString(), // prResult.artifactId maybe?
+						provider: provider,
+						createdDate: new Date(prResult.creationDate),
+						updatedDate: new Date(prResult.creationDate),
+						state: azurePullRequestStatusToState(prResult.status),
+						closed: isClosedAzurePullRequestStatus(prResult.status),
+						title: prResult.title,
+						url: getAzurePullRequestWebUrl(prResult),
+					};
+				}
+
 				return undefined;
+			} catch (ex) {
+				if (ex.original?.status !== 404) {
+					scope?.error(ex);
+					return undefined;
+				}
 			}
 		}
-
-		try {
-			const prResult = await this.request<AzurePullRequestWithLinks>(
-				provider,
-				token,
-				options?.baseUrl,
-				`${owner}/${projectName}/_apis/git/repositories/${repoName}/pullRequests/${id}`,
-				{
-					method: 'GET',
-				},
-				scope,
-			);
-
-			if (prResult != null) {
-				return {
-					id: prResult.pullRequestId.toString(),
-					type: 'pullrequest',
-					nodeId: prResult.pullRequestId.toString(), // prResult.artifactId maybe?
-					provider: provider,
-					createdDate: new Date(prResult.creationDate),
-					updatedDate: new Date(prResult.creationDate),
-					state: azurePullRequestStatusToState(prResult.status),
-					closed: isClosedAzurePullRequestStatus(prResult.status),
-					title: prResult.title,
-					url: getAzurePullRequestWebUrl(prResult),
-				};
-			}
-
-			return undefined;
-		} catch (ex) {
-			Logger.error(ex, scope);
-			return undefined;
-		}
+		return undefined;
 	}
 
-	@debug<AzureDevOpsApi['getIssue']>({ args: { 0: p => p.name, 1: '<token>' } })
+	@trace({
+		args: (provider, token, project, id) => ({
+			provider: provider.name,
+			token: `<token:${token.microHash}>`,
+			project: project,
+			id: id,
+		}),
+	})
 	public async getIssue(
 		provider: Provider,
-		token: string,
+		token: TokenWithInfo,
 		project: AzureProjectDescriptor,
 		id: string,
 		options: {
 			baseUrl: string;
 		},
 	): Promise<Issue | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			// Try to get the Work item (wit) first with specific fields
@@ -307,7 +366,7 @@ export class AzureDevOpsApi implements Disposable {
 			}
 		} catch (ex) {
 			if (ex.original?.status !== 404) {
-				Logger.error(ex, scope);
+				scope?.error(ex);
 				return undefined;
 			}
 		}
@@ -315,10 +374,19 @@ export class AzureDevOpsApi implements Disposable {
 		return undefined;
 	}
 
-	@debug<AzureDevOpsApi['getAccountForCommit']>({ args: { 0: p => p.name, 1: '<token>' } })
+	@trace({
+		args: (provider, token, owner, repo, rev, baseUrl) => ({
+			provider: provider.name,
+			token: `<token:${token.microHash}>`,
+			owner: owner,
+			repo: repo,
+			rev: rev,
+			baseUrl: baseUrl,
+		}),
+	})
 	async getAccountForCommit(
 		provider: Provider,
-		token: string,
+		token: TokenWithInfo,
 		owner: string,
 		repo: string,
 		rev: string,
@@ -327,7 +395,7 @@ export class AzureDevOpsApi implements Disposable {
 			avatarSize?: number;
 		},
 	): Promise<UnidentifiedAuthor | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		const [projectName, _, repoName] = repo.split('/');
 
 		try {
@@ -357,7 +425,7 @@ export class AzureDevOpsApi implements Disposable {
 			} satisfies UnidentifiedAuthor;
 		} catch (ex) {
 			if (ex.original?.status !== 404) {
-				Logger.error(ex, scope);
+				scope?.error(ex);
 				return undefined;
 			}
 		}
@@ -365,11 +433,72 @@ export class AzureDevOpsApi implements Disposable {
 		return undefined;
 	}
 
+	@trace({
+		args: (provider, token, baseUrl) => ({
+			provider: provider.name,
+			token: `<token:${token.microHash}>`,
+			baseUrl: baseUrl,
+		}),
+	})
+	async getCurrentUserOnServer(
+		provider: Provider,
+		token: TokenWithInfo,
+		baseUrl: string,
+	): Promise<{ id: string; name?: string; email?: string; username?: string; avatarUrl?: string } | undefined> {
+		const scope = getScopedLogger();
+
+		try {
+			const connectionData = await this.request<{
+				authenticatedUser?: {
+					id: string;
+					descriptor: string;
+					isActive: boolean;
+					metTypeId: number;
+					providerDisplayName?: string;
+					emailAddress?: string;
+					resourceVersion: 2;
+					subjectDescriptor: string;
+					properties?: {
+						Account?: {
+							$type: string;
+							$value: string;
+						};
+					};
+				};
+			}>(
+				provider,
+				token,
+				baseUrl,
+				'_apis/connectionData',
+				{
+					method: 'GET',
+				},
+				scope,
+			);
+
+			const user = connectionData?.authenticatedUser;
+			const username = user?.properties?.Account?.$value;
+			if (!username) {
+				return undefined;
+			}
+
+			return {
+				id: user.id,
+				name: user.providerDisplayName,
+				email: user.emailAddress,
+				username: username,
+			};
+		} catch (ex) {
+			scope?.error(ex, `Failed to get current user from ${baseUrl}`);
+			return undefined;
+		}
+	}
+
 	async getWorkItemStateCategory(
 		issueType: string,
 		state: string,
 		provider: Provider,
-		token: string,
+		token: TokenWithInfo,
 		owner: string,
 		projectName: string,
 		options: {
@@ -389,14 +518,14 @@ export class AzureDevOpsApi implements Disposable {
 	private async retrieveWorkItemTypeStates(
 		workItemType: string,
 		provider: Provider,
-		token: string,
+		token: TokenWithInfo,
 		owner: string,
 		projectName: string,
 		options: {
 			baseUrl: string;
 		},
 	): Promise<AzureWorkItemState[]> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const issueResult = await this.request<{ value: AzureWorkItemState[]; count: number }>(
@@ -412,25 +541,26 @@ export class AzureDevOpsApi implements Disposable {
 
 			return issueResult?.value ?? [];
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return [];
 		}
 	}
 
 	private async request<T>(
 		provider: Provider,
-		token: string,
+		token: TokenWithInfo,
 		baseUrl: string | undefined,
 		route: string,
 		options: { method: RequestInit['method'] } & Record<string, unknown>,
-		scope: LogScope | undefined,
+		scope: ScopedLogger | undefined,
 		cancellation?: CancellationToken | undefined,
 	): Promise<T | undefined> {
+		const { accessToken, ...tokenInfo } = token;
 		const url = baseUrl ? `${baseUrl}/${route}` : route;
 
 		let rsp: Response;
 		try {
-			const sw = maybeStopWatch(`[AZURE] ${options?.method ?? 'GET'} ${url}`, { log: false });
+			const sw = maybeStopWatch(`[AZURE] ${options?.method ?? 'GET'} ${url}`, { log: { onlyExit: true } });
 			const agent = this.proxyAgent;
 
 			try {
@@ -445,7 +575,7 @@ export class AzureDevOpsApi implements Disposable {
 				rsp = await wrapForForcedInsecureSSL(provider.getIgnoreSSLErrors(), () =>
 					fetch(url, {
 						headers: {
-							Authorization: `Basic ${base64(`PAT:${token}`)}`,
+							Authorization: `Basic ${base64(`PAT:${accessToken}`)}`,
 							'Content-Type': 'application/json',
 						},
 						agent: agent,
@@ -465,7 +595,7 @@ export class AzureDevOpsApi implements Disposable {
 			}
 		} catch (ex) {
 			if (ex instanceof ProviderFetchError || ex.name === 'AbortError') {
-				this.handleRequestError(provider, token, ex, scope);
+				this.handleRequestError(provider, tokenInfo, ex, scope);
 			} else if (Logger.isDebugging) {
 				void window.showErrorMessage(`AzureDevOps request failed: ${ex.message}`);
 			}
@@ -476,9 +606,9 @@ export class AzureDevOpsApi implements Disposable {
 
 	private handleRequestError(
 		provider: Provider | undefined,
-		_token: string,
+		tokenInfo: TokenInfo,
 		ex: ProviderFetchError | (Error & { name: 'AbortError' }),
-		scope: LogScope | undefined,
+		scope: ScopedLogger | undefined,
 	): void {
 		if (ex.name === 'AbortError' || !(ex instanceof ProviderFetchError)) throw new CancellationError(ex);
 
@@ -488,7 +618,7 @@ export class AzureDevOpsApi implements Disposable {
 			case 422: // Unprocessable Entity
 				throw new RequestNotFoundError(ex);
 			case 401: // Unauthorized
-				throw new AuthenticationError('azureDevOps', AuthenticationErrorReason.Unauthorized, ex);
+				throw new AuthenticationError(tokenInfo, AuthenticationErrorReason.Unauthorized, ex);
 			case 403: // Forbidden
 				// TODO: Learn the Azure API docs and put it in order:
 				// 	if (ex.message.includes('rate limit')) {
@@ -504,9 +634,9 @@ export class AzureDevOpsApi implements Disposable {
 
 				// 		throw new RequestRateLimitError(ex, token, resetAt);
 				// 	}
-				throw new AuthenticationError('azure', AuthenticationErrorReason.Forbidden, ex);
+				throw new AuthenticationError(tokenInfo, AuthenticationErrorReason.Forbidden, ex);
 			case 500: // Internal Server Error
-				Logger.error(ex, scope);
+				scope?.error(ex);
 				if (ex.response != null) {
 					provider?.trackRequestException();
 					void showIntegrationRequestFailed500WarningMessage(
@@ -519,7 +649,7 @@ export class AzureDevOpsApi implements Disposable {
 				}
 				return;
 			case 502: // Bad Gateway
-				Logger.error(ex, scope);
+				scope?.error(ex);
 				// TODO: Learn the Azure API docs and put it in order:
 				// if (ex.message.includes('timeout')) {
 				// 	provider?.trackRequestException();
@@ -532,7 +662,7 @@ export class AzureDevOpsApi implements Disposable {
 				break;
 		}
 
-		Logger.error(ex, scope);
+		scope?.error(ex);
 		if (Logger.isDebugging) {
 			void window.showErrorMessage(
 				`AzureDevOps request failed: ${(ex.response as any)?.errors?.[0]?.message ?? ex.message}`,

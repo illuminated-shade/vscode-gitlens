@@ -1,11 +1,12 @@
-import type { Container } from '../../container';
-import { normalizePath } from '../../system/path';
-import { maybeStopWatch } from '../../system/stopwatch';
-import { GitStatus } from '../models/status';
-import { GitStatusFile } from '../models/statusFile';
+import type { Container } from '../../container.js';
+import { normalizePath } from '../../system/path.js';
+import { maybeStopWatch } from '../../system/stopwatch.js';
+import { GitStatus } from '../models/status.js';
+import { GitStatusFile } from '../models/statusFile.js';
 
 const aheadStatusV1Regex = /(?:ahead ([0-9]+))/;
 const behindStatusV1Regex = /(?:behind ([0-9]+))/;
+const quoteRegex = /"/g;
 
 export function parseGitStatus(
 	container: Container,
@@ -14,8 +15,7 @@ export function parseGitStatus(
 	porcelainVersion: number,
 ): GitStatus | undefined {
 	using sw = maybeStopWatch(`Git.parseStatus(${repoPath}, v=${porcelainVersion})`, {
-		log: false,
-		logLevel: 'debug',
+		log: { onlyExit: true, level: 'debug' },
 	});
 	if (!data) {
 		sw?.stop({ suffix: ` no data` });
@@ -71,7 +71,7 @@ function parseStatusV1(container: Container, lines: string[], repoPath: string):
 			const rawStatus = line.substring(0, 2);
 			const fileName = line.substring(3);
 			if (rawStatus.startsWith('R') || rawStatus.startsWith('C')) {
-				const [file1, file2] = fileName.replace(/"/g, '').split('->');
+				const [file1, file2] = fileName.replace(quoteRegex, '').split(' -> ');
 				files.push(parseStatusFile(container, repoPath, rawStatus, file2.trim(), file1.trim()));
 			} else {
 				files.push(parseStatusFile(container, repoPath, rawStatus, fileName));
@@ -125,18 +125,50 @@ function parseStatusV2(container: Container, lines: string[], repoPath: string):
 		} else {
 			const lineParts = line.split(' ');
 			switch (lineParts[0][0]) {
-				case '1': // normal
-					files.push(parseStatusFile(container, repoPath, lineParts[1], lineParts.slice(8).join(' ')));
-					break;
-				case '2': {
-					// rename
-					const file = lineParts.slice(9).join(' ').split('\t');
-					files.push(parseStatusFile(container, repoPath, lineParts[1], file[0], file[1]));
+				case '1': {
+					// normal: 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+					// <sub> starts with 'S' if submodule, 'N' if not
+					const submodule = lineParts[2]?.startsWith('S')
+						? { oid: lineParts[7], previousOid: lineParts[6] }
+						: undefined;
+					files.push(
+						parseStatusFile(
+							container,
+							repoPath,
+							lineParts[1],
+							lineParts.slice(8).join(' '),
+							undefined,
+							submodule,
+						),
+					);
 					break;
 				}
-				case 'u': // unmerged
-					files.push(parseStatusFile(container, repoPath, lineParts[1], lineParts.slice(10).join(' ')));
+				case '2': {
+					// rename: 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>\t<origPath>
+					const submodule = lineParts[2]?.startsWith('S')
+						? { oid: lineParts[7], previousOid: lineParts[6] }
+						: undefined;
+					const file = lineParts.slice(9).join(' ').split('\t');
+					files.push(parseStatusFile(container, repoPath, lineParts[1], file[0], file[1], submodule));
 					break;
+				}
+				case 'u': {
+					// unmerged: u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+					const submodule = lineParts[2]?.startsWith('S')
+						? { oid: lineParts[9], previousOid: lineParts[7] }
+						: undefined;
+					files.push(
+						parseStatusFile(
+							container,
+							repoPath,
+							lineParts[1],
+							lineParts.slice(10).join(' '),
+							undefined,
+							submodule,
+						),
+					);
+					break;
+				}
 				case '?': // untracked
 					files.push(parseStatusFile(container, repoPath, '??', lineParts.slice(1).join(' ')));
 					break;
@@ -160,6 +192,7 @@ function parseStatusFile(
 	rawStatus: string,
 	fileName: string,
 	originalFileName?: string,
+	submodule?: { readonly oid: string; readonly previousOid?: string },
 ): GitStatusFile {
 	let x = !rawStatus.startsWith('.') ? rawStatus[0].trim() : undefined;
 	if (x == null || x.length === 0) {
@@ -174,5 +207,5 @@ function parseStatusFile(
 		}
 	}
 
-	return new GitStatusFile(container, repoPath, x, y, fileName, originalFileName);
+	return new GitStatusFile(container, repoPath, x, y, fileName, originalFileName, submodule);
 }

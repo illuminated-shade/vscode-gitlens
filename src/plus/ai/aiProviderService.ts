@@ -1,6 +1,7 @@
 import type { CancellationToken, Disposable, Event, MessageItem, ProgressOptions } from 'vscode';
 import { CancellationTokenSource, env, EventEmitter, window } from 'vscode';
-import type { AIPrimaryProviders, AIProviderAndModel, AIProviders, SupportedAIModels } from '../../constants.ai';
+import { fetch } from '@env/fetch.js';
+import type { AIPrimaryProviders, AIProviderAndModel, AIProviders, SupportedAIModels } from '../../constants.ai.js';
 import {
 	anthropicProviderDescriptor,
 	azureProviderDescriptor,
@@ -16,43 +17,49 @@ import {
 	openRouterProviderDescriptor,
 	vscodeProviderDescriptor,
 	xAIProviderDescriptor,
-} from '../../constants.ai';
-import type { AIGenerateCreateDraftEventData, Source, TelemetryEvents } from '../../constants.telemetry';
-import type { Container } from '../../container';
+} from '../../constants.ai.js';
+import type { Source, TelemetryEvents } from '../../constants.telemetry.js';
+import type { Container } from '../../container.js';
 import {
 	AIError,
 	AIErrorReason,
 	AINoRequestDataError,
 	AuthenticationRequiredError,
 	CancellationError,
-} from '../../errors';
-import type { AIFeatures } from '../../features';
-import { isAdvancedFeature } from '../../features';
-import type { GitRepositoryService } from '../../git/gitRepositoryService';
-import type { GitCommit } from '../../git/models/commit';
-import { isCommit } from '../../git/models/commit';
-import type { GitRevisionReference } from '../../git/models/reference';
-import type { Repository } from '../../git/models/repository';
-import { uncommitted, uncommittedStaged } from '../../git/models/revision';
-import { assertsCommitHasFullDetails } from '../../git/utils/commit.utils';
-import { showAIModelPicker, showAIProviderPicker } from '../../quickpicks/aiModelPicker';
-import { Directive, isDirective } from '../../quickpicks/items/directive';
-import { configuration } from '../../system/-webview/configuration';
-import type { Storage } from '../../system/-webview/storage';
-import { debounce } from '../../system/function/debounce';
-import { map } from '../../system/iterable';
-import type { Lazy } from '../../system/lazy';
-import { lazy } from '../../system/lazy';
-import { Logger } from '../../system/logger';
-import { getLogScope } from '../../system/logger.scope';
-import type { Deferred } from '../../system/promise';
-import { getSettledValue, getSettledValues } from '../../system/promise';
-import { PromiseCache } from '../../system/promiseCache';
-import type { ServerConnection } from '../gk/serverConnection';
-import { ensureFeatureAccess } from '../gk/utils/-webview/acount.utils';
-import { isAiAllAccessPromotionActive } from '../gk/utils/-webview/promo.utils';
-import { compareSubscriptionPlans, getSubscriptionPlanName, isSubscriptionPaid } from '../gk/utils/subscription.utils';
-import { GitKrakenProvider } from './gitkrakenProvider';
+	isCancellationError,
+} from '../../errors.js';
+import type { AIFeatures } from '../../features.js';
+import { isAdvancedFeature } from '../../features.js';
+import type { Repository } from '../../git/models/repository.js';
+import { uncommitted, uncommittedStaged } from '../../git/models/revision.js';
+import { filterDiffFiles } from '../../git/parsers/diffParser.js';
+import { showAIModelPicker, showAIProviderPicker } from '../../quickpicks/aiModelPicker.js';
+import { Directive, isDirective } from '../../quickpicks/items/directive.js';
+import { configuration } from '../../system/-webview/configuration.js';
+import { getContext } from '../../system/-webview/context.js';
+import type { Storage } from '../../system/-webview/storage.js';
+import { debug, trace } from '../../system/decorators/log.js';
+import { debounce } from '../../system/function/debounce.js';
+import { map } from '../../system/iterable.js';
+import type { Lazy } from '../../system/lazy.js';
+import { lazy } from '../../system/lazy.js';
+import { Logger } from '../../system/logger.js';
+import { getScopedLogger } from '../../system/logger.scope.js';
+import type { Deferred } from '../../system/promise.js';
+import { getSettledValue, getSettledValues } from '../../system/promise.js';
+import { PromiseCache } from '../../system/promiseCache.js';
+import type { Serialized } from '../../system/serialize.js';
+import type { ServerConnection } from '../gk/serverConnection.js';
+import { ensureFeatureAccess } from '../gk/utils/-webview/acount.utils.js';
+import { isAiAllAccessPromotionActive } from '../gk/utils/-webview/promo.utils.js';
+import {
+	compareSubscriptionPlans,
+	getSubscriptionPlanName,
+	isSubscriptionPaid,
+} from '../gk/utils/subscription.utils.js';
+import { AIActions } from './aiActions.js';
+import { AIIgnoreCache } from './aiIgnoreCache.js';
+import type { AIService } from './aiService.js';
 import type {
 	AIActionType,
 	AIModel,
@@ -60,69 +67,37 @@ import type {
 	AIProviderConstructor,
 	AIProviderDescriptorWithConfiguration,
 	AIProviderDescriptorWithType,
-} from './models/model';
+} from './models/model.js';
 import type {
 	PromptTemplate,
 	PromptTemplateContext,
 	PromptTemplateId,
 	PromptTemplateType,
-} from './models/promptTemplates';
-import type { AIChatMessage, AIProvider, AIRequestResult } from './models/provider';
-import { ensureAccess, getOrgAIConfig, isProviderEnabledByOrg } from './utils/-webview/ai.utils';
-import { getLocalPromptTemplate, resolvePrompt } from './utils/-webview/prompt.utils';
+	TruncationHandler,
+} from './models/promptTemplates.js';
+import type { AIChatMessage, AIProvider, AIProviderResponse, AIProviderResult } from './models/provider.js';
+import { ensureAccess, getOrgAIConfig, isProviderEnabledByOrg } from './utils/-webview/ai.utils.js';
+import type { ResolvePromptOptions } from './utils/-webview/prompt.utils.js';
+import { getLocalPromptTemplate, resolvePrompt } from './utils/-webview/prompt.utils.js';
 
-export interface AIResult {
-	readonly id?: string;
-	readonly content: string;
+export interface AIResponse<T = void> extends AIProviderResponse<T> {
+	readonly type: AIActionType;
+	readonly feature: string;
+}
+
+export interface AIResult<T = void> {
 	readonly model: AIModel;
-	readonly usage?: {
-		readonly promptTokens?: number;
-		readonly completionTokens?: number;
-		readonly totalTokens?: number;
-
-		readonly limits?: {
-			readonly used: number;
-			readonly limit: number;
-			readonly resetsOn: Date;
-		};
-	};
+	readonly promise: Promise<AIResponse<T> | 'cancelled' | undefined>;
+	readonly type: AIActionType;
+	readonly feature: string;
 }
 
-export interface AISummarizeResult extends AIResult {
-	readonly parsed: {
-		readonly summary: string;
-		readonly body: string;
-	};
-}
-
-export interface AIRebaseResult extends AIResult {
-	readonly diff: string;
-	readonly hunkMap: { index: number; hunkHeader: string }[];
-	readonly commits: {
-		readonly message: string;
-		readonly explanation: string;
-		readonly hunks: { hunk: number }[];
-	}[];
-}
-
-export interface AIGenerateChangelogChange {
-	readonly message: string;
-	readonly issues: readonly { readonly id: string; readonly url: string; readonly title: string | undefined }[];
-}
-
-export interface AIGenerateChangelogChanges {
-	readonly changes: readonly AIGenerateChangelogChange[];
-	readonly range: {
-		readonly base: { readonly ref: string; readonly label?: string };
-		readonly head: { readonly ref: string; readonly label?: string };
-	};
-}
+export interface AIResultContext extends Serialized<Omit<AIResponse<any>, 'content' | 'result'>, string> {}
+export type AISourceContext<T> = Source & { context: T };
 
 export interface AIModelChangeEvent {
 	readonly model: AIModel | undefined;
 }
-
-export type AIExplainSource = Source & { type: TelemetryEvents['ai/explain']['changeType'] };
 
 // Order matters for sorting the picker
 const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>([
@@ -131,7 +106,7 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		{
 			...gitKrakenProviderDescriptor,
 			type: lazy(
-				async () => (await import(/* webpackChunkName: "ai" */ './gitkrakenProvider')).GitKrakenProvider,
+				async () => (await import(/* webpackChunkName: "ai" */ './gitkrakenProvider.js')).GitKrakenProvider,
 			),
 		},
 	],
@@ -139,7 +114,7 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		'vscode',
 		{
 			...vscodeProviderDescriptor,
-			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './vscodeProvider')).VSCodeAIProvider),
+			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './vscodeProvider.js')).VSCodeAIProvider),
 		},
 	],
 	[
@@ -147,7 +122,7 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		{
 			...anthropicProviderDescriptor,
 			type: lazy(
-				async () => (await import(/* webpackChunkName: "ai" */ './anthropicProvider')).AnthropicProvider,
+				async () => (await import(/* webpackChunkName: "ai" */ './anthropicProvider.js')).AnthropicProvider,
 			),
 		},
 	],
@@ -155,28 +130,28 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		'gemini',
 		{
 			...geminiProviderDescriptor,
-			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './geminiProvider')).GeminiProvider),
+			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './geminiProvider.js')).GeminiProvider),
 		},
 	],
 	[
 		'openai',
 		{
 			...openAIProviderDescriptor,
-			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './openaiProvider')).OpenAIProvider),
+			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './openaiProvider.js')).OpenAIProvider),
 		},
 	],
 	[
 		'azure',
 		{
 			...azureProviderDescriptor,
-			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './azureProvider')).AzureProvider),
+			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './azureProvider.js')).AzureProvider),
 		},
 	],
 	[
 		'mistral',
 		{
 			...mistralProviderDescriptor,
-			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './mistralProvider')).MistralProvider),
+			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './mistralProvider.js')).MistralProvider),
 		},
 	],
 	[
@@ -185,7 +160,8 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 			...openAICompatibleProviderDescriptor,
 			type: lazy(
 				async () =>
-					(await import(/* webpackChunkName: "ai" */ './openAICompatibleProvider')).OpenAICompatibleProvider,
+					(await import(/* webpackChunkName: "ai" */ './openAICompatibleProvider.js'))
+						.OpenAICompatibleProvider,
 			),
 		},
 	],
@@ -193,7 +169,7 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		'ollama',
 		{
 			...ollamaProviderDescriptor,
-			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './ollamaProvider')).OllamaProvider),
+			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './ollamaProvider.js')).OllamaProvider),
 		},
 	],
 	[
@@ -201,7 +177,7 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		{
 			...openRouterProviderDescriptor,
 			type: lazy(
-				async () => (await import(/* webpackChunkName: "ai" */ './openRouterProvider')).OpenRouterProvider,
+				async () => (await import(/* webpackChunkName: "ai" */ './openRouterProvider.js')).OpenRouterProvider,
 			),
 		},
 	],
@@ -210,7 +186,7 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		{
 			...huggingFaceProviderDescriptor,
 			type: lazy(
-				async () => (await import(/* webpackChunkName: "ai" */ './huggingFaceProvider')).HuggingFaceProvider,
+				async () => (await import(/* webpackChunkName: "ai" */ './huggingFaceProvider.js')).HuggingFaceProvider,
 			),
 		},
 	],
@@ -219,7 +195,8 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		{
 			...githubProviderDescriptor,
 			type: lazy(
-				async () => (await import(/* webpackChunkName: "ai" */ './githubModelsProvider')).GitHubModelsProvider,
+				async () =>
+					(await import(/* webpackChunkName: "ai" */ './githubModelsProvider.js')).GitHubModelsProvider,
 			),
 		},
 	],
@@ -227,19 +204,68 @@ const supportedAIProviders = new Map<AIProviders, AIProviderDescriptorWithType>(
 		'deepseek',
 		{
 			...deepSeekProviderDescriptor,
-			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './deepSeekProvider')).DeepSeekProvider),
+			type: lazy(
+				async () => (await import(/* webpackChunkName: "ai" */ './deepSeekProvider.js')).DeepSeekProvider,
+			),
 		},
 	],
 	[
 		'xai',
 		{
 			...xAIProviderDescriptor,
-			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './xaiProvider')).XAIProvider),
+			type: lazy(async () => (await import(/* webpackChunkName: "ai" */ './xaiProvider.js')).XAIProvider),
 		},
 	],
 ]);
 
-export class AIProviderService implements Disposable {
+export interface AIRequestProvider {
+	/**
+	 * Get the messages for the current conversation state.
+	 * Called before each AI request (including the first one).
+	 * @param attempt The current attempt number (0-based)
+	 */
+	getMessages: (
+		model: AIModel,
+		reporting: TelemetryEvents['ai/generate' | 'ai/explain'],
+		cancellation: CancellationToken,
+		maxInputTokens: number,
+		retries: number,
+	) => Promise<AIChatMessage[]>;
+
+	/**
+	 * Get the progress title for each attempt.
+	 * @param model The AI model being used
+	 * @param attempt The current attempt number (0-based)
+	 */
+	getProgressTitle: (model: AIModel, attempt: number) => string;
+
+	/**
+	 * Get telemetry information for each attempt.
+	 * @param model The AI model being used
+	 * @param attempt The current attempt number (0-based)
+	 */
+	getTelemetryInfo: (
+		model: AIModel,
+		attempt: number,
+	) => {
+		key: 'ai/generate' | 'ai/explain';
+		data: TelemetryEvents['ai/generate' | 'ai/explain'];
+	};
+}
+
+export interface AIConversationProvider<TResult> extends AIRequestProvider {
+	/**
+	 * Validate the AI response and return either:
+	 * - { isValid: true, result: TResult } if validation passes
+	 * - { isValid: false, errorMessage: string, retryPrompt: string } if validation fails
+	 */
+	validateResponse: (
+		response: AIProviderResponse<void>,
+		attempt: number,
+	) => { isValid: true; result: TResult } | { isValid: false; errorMessage: string; retryPrompt: string };
+}
+
+export class AIProviderService implements AIService, Disposable {
 	private readonly _onDidChangeModel = new EventEmitter<AIModelChangeEvent>();
 	get onDidChangeModel(): Event<AIModelChangeEvent> {
 		return this._onDidChangeModel.event;
@@ -248,13 +274,28 @@ export class AIProviderService implements Disposable {
 	private readonly _disposable: Disposable;
 	private _model: AIModel | undefined;
 	private readonly _promptTemplates = new PromiseCache<PromptTemplateId, PromptTemplate | undefined>({
-		createTTL: 12 * 60 * 60 * 1000, // 12 hours
+		createTTL: 12 * 60 * 60 * 1000, // 12 hours,
+		expireOnError: false,
 	});
 	private _provider: AIProvider | undefined;
 	private _providerDisposable: Disposable | undefined;
 
+	private _actions: AIActions | undefined;
+	get actions(): AIActions {
+		this._actions ??= new AIActions(this);
+		return this._actions;
+	}
+
+	get allowed(): boolean {
+		return getContext('gitlens:gk:organization:ai:enabled', true);
+	}
+
+	get enabled(): boolean {
+		return configuration.get('ai.enabled', undefined, true);
+	}
+
 	constructor(
-		private readonly container: Container,
+		readonly container: Container,
 		private readonly connection: ServerConnection,
 	) {
 		this._disposable = this.container.subscription.onDidChange(() => this._promptTemplates.clear());
@@ -265,6 +306,15 @@ export class AIProviderService implements Disposable {
 		this._onDidChangeModel.dispose();
 		this._providerDisposable?.dispose();
 		this._provider?.dispose();
+	}
+
+	async enable(source?: Source): Promise<void> {
+		if (this.enabled) return;
+
+		if (this.container.telemetry.enabled) {
+			this.container.telemetry.sendEvent('ai/enabled', undefined, source);
+		}
+		await configuration.updateEffective('ai.enabled', true);
 	}
 
 	private getConfiguredModel(): AIModelDescriptor | undefined {
@@ -316,6 +366,38 @@ export class AIProviderService implements Disposable {
 		return modelResults.flatMap(m => getSettledValue(m, []));
 	}
 
+	private async getBestFallbackModel(): Promise<AIModel | undefined> {
+		let model: AIModel | undefined;
+		let models: readonly AIModel[];
+
+		const orgAIConfig = getOrgAIConfig();
+		// First, use Copilot GPT 4.1 or first model
+		if (isProviderEnabledByOrg('vscode', orgAIConfig)) {
+			try {
+				models = await this.getModels('vscode');
+				if (models.length) {
+					model = models.find(m => m.id === 'copilot:gpt-4.1') ?? models[0];
+					if (model != null) return model;
+				}
+			} catch {}
+		}
+
+		// Second, use the GitKraken AI default or first model
+		if (isProviderEnabledByOrg('gitkraken', orgAIConfig)) {
+			try {
+				const subscription = await this.container.subscription.getSubscription();
+				if (subscription.account?.verified) {
+					models = await this.getModels('gitkraken');
+
+					model = models.find(m => m.default) ?? models[0];
+					if (model != null) return model;
+				}
+			} catch {}
+		}
+
+		return model;
+	}
+
 	async getModel(options?: { force?: boolean; silent?: boolean }, source?: Source): Promise<AIModel | undefined> {
 		const cfg = this.getConfiguredModel();
 		if (!options?.force && cfg?.provider != null && cfg?.model != null) {
@@ -323,50 +405,58 @@ export class AIProviderService implements Disposable {
 			if (model != null) return model;
 		}
 
-		if (options?.silent) return undefined;
-
-		let chosenProviderId: AIProviders | undefined;
 		let chosenModel: AIModel | undefined;
-		const orgAiConf = getOrgAIConfig();
+		let chosenProviderId: AIProviders | undefined;
+		const currentModel =
+			cfg?.provider != null && cfg?.model != null
+				? lazy(() => this.getOrUpdateModel(cfg.provider, cfg.model))
+				: undefined;
+		const fallbackModel = lazy(() => this.getBestFallbackModel());
 
-		if (!options?.force) {
-			const vsCodeModels = await this.getModels('vscode');
-			if (isProviderEnabledByOrg('vscode', orgAiConf) && vsCodeModels.length !== 0) {
-				chosenProviderId = 'vscode';
-			} else if (
-				isProviderEnabledByOrg('gitkraken', orgAiConf) &&
-				(await this.container.subscription.getSubscription()).account?.verified
-			) {
-				chosenProviderId = 'gitkraken';
-				const gitkrakenModels = await this.getModels('gitkraken');
-				chosenModel = gitkrakenModels.find(m => m.default);
+		if (!options?.silent) {
+			if (!options?.force) {
+				chosenModel = currentModel != null ? await currentModel.value : await fallbackModel.value;
+				chosenProviderId = chosenModel?.provider.id;
 			}
-		}
 
-		while (true) {
-			chosenProviderId ??= (await showAIProviderPicker(this.container, cfg))?.provider;
-			if (chosenProviderId == null) return;
-
-			const provider = supportedAIProviders.get(chosenProviderId);
-			if (provider == null) return;
-
-			if (!(await this.ensureProviderConfigured(provider, false))) return;
-
-			if (chosenModel == null) {
-				const result = await showAIModelPicker(this.container, chosenProviderId, cfg);
-				if (result == null || (isDirective(result) && result !== Directive.Back)) return;
-				if (result === Directive.Back) {
-					chosenProviderId = undefined;
-					continue;
+			while (true) {
+				chosenProviderId ??= (await showAIProviderPicker(this.container, cfg, source))?.provider;
+				if (chosenProviderId == null) {
+					chosenModel = undefined;
+					break;
 				}
 
-				chosenModel = result.model;
-			}
+				const provider = supportedAIProviders.get(chosenProviderId);
+				if (provider == null) {
+					chosenModel = undefined;
+					break;
+				}
 
-			break;
+				if (!(await this.ensureProviderConfigured(provider, false))) {
+					chosenModel = undefined;
+				}
+
+				if (chosenModel == null) {
+					const result = await showAIModelPicker(this.container, chosenProviderId, cfg, source);
+					if (result == null || (isDirective(result) && result !== Directive.Back)) {
+						chosenModel = undefined;
+						break;
+					}
+					if (result === Directive.Back) {
+						chosenProviderId = undefined;
+						continue;
+					}
+
+					chosenModel = result.model;
+				}
+
+				break;
+			}
 		}
 
-		const model = await this.getOrUpdateModel(chosenModel);
+		chosenModel ??= currentModel != null ? await currentModel.value : await fallbackModel.value;
+		const model = chosenModel == null ? undefined : await this.getOrUpdateModel(chosenModel);
+		if (options?.silent) return model;
 
 		this.container.telemetry.sendEvent(
 			'ai/switchModel',
@@ -380,7 +470,9 @@ export class AIProviderService implements Disposable {
 			source,
 		);
 
-		void (await showConfirmAIProviderToS(this.container.storage));
+		if (model != null) {
+			void (await showConfirmAIProviderToS(this.container.storage));
+		}
 		return model;
 	}
 
@@ -500,650 +592,66 @@ export class AIProviderService implements Disposable {
 	}
 
 	private async ensureFeatureAccess(feature: AIFeatures, source: Source): Promise<boolean> {
-		if (!(await ensureAccess())) return false;
+		if (!(await ensureAccess(this.container, undefined, source))) return false;
 
 		if (feature === 'generate-commitMessage') return true;
-		if (
-			!(await ensureFeatureAccess(
-				this.container,
-				isAdvancedFeature(feature)
-					? 'This AI feature requires GitLens Advanced or a Pro trial'
-					: 'This AI feature requires GitLens Pro or a Pro trial',
-				feature,
-				source,
-			))
-		) {
+		const suffix = isAdvancedFeature(feature)
+			? 'requires GitLens Advanced or a trial'
+			: 'requires GitLens Pro or a trial';
+		let label;
+		switch (feature) {
+			case 'generate-searchQuery':
+				label = `AI-powered search (preview) ${suffix}`;
+				break;
+
+			default:
+				label = isAdvancedFeature(feature) ? `This AI preview feature ${suffix}` : `This AI feature ${suffix}`;
+		}
+
+		if (!(await ensureFeatureAccess(this.container, label, feature, source))) {
 			return false;
 		}
 
 		return true;
 	}
 
-	async explainCommit(
-		commitOrRevision: GitRevisionReference | GitCommit,
-		sourceContext: AIExplainSource,
-		options?: { cancellation?: CancellationToken; progress?: ProgressOptions },
-	): Promise<AISummarizeResult | 'cancelled' | undefined> {
-		const svc = this.container.git.getRepositoryService(commitOrRevision.repoPath);
-		return this.explainChanges(
-			async cancellation => {
-				const diff = await svc.diff.getDiff?.(commitOrRevision.ref);
-				if (!diff?.contents) throw new AINoRequestDataError('No changes found to explain.');
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const commit = isCommit(commitOrRevision)
-					? commitOrRevision
-					: await svc.commits.getCommit(commitOrRevision.ref);
-				if (commit == null) throw new AINoRequestDataError('No commit found to explain.');
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				if (!commit.hasFullDetails()) {
-					await commit.ensureFullDetails();
-					assertsCommitHasFullDetails(commit);
-					if (cancellation.isCancellationRequested) throw new CancellationError();
-				}
-
-				return { diff: diff.contents, message: commit.message };
-			},
-			sourceContext,
-			options,
-		);
-	}
-
-	async explainChanges(
-		promptContext:
-			| PromptTemplateContext<'explain-changes'>
-			| ((cancellationToken: CancellationToken) => Promise<PromptTemplateContext<'explain-changes'>>),
-		sourceContext: AIExplainSource,
-		options?: { cancellation?: CancellationToken; progress?: ProgressOptions },
-	): Promise<AISummarizeResult | 'cancelled' | undefined> {
-		const { type, ...source } = sourceContext;
-
-		const result = await this.sendRequest(
-			'explain-changes',
-			async (model, reporting, cancellation, maxInputTokens, retries) => {
-				if (typeof promptContext === 'function') {
-					promptContext = await promptContext(cancellation);
-				}
-
-				promptContext.instructions = `${
-					promptContext.instructions ? `${promptContext.instructions}\n` : ''
-				}${configuration.get('ai.explainChanges.customInstructions')}`;
-
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const { prompt } = await this.getPrompt(
-					'explain-changes',
-					model,
-					promptContext,
-					maxInputTokens,
-					retries,
-					reporting,
-				);
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const messages: AIChatMessage[] = [{ role: 'user', content: prompt }];
-				return messages;
-			},
-
-			m => `Explaining changes with ${m.name}...`,
-			source,
-			m => ({
-				key: 'ai/explain',
-				data: {
-					type: 'change',
-					changeType: type,
-					'model.id': m.id,
-					'model.provider.id': m.provider.id,
-					'model.provider.name': m.provider.name,
-					'retry.count': 0,
-				},
-			}),
-			options,
-		);
-		return result === 'cancelled'
-			? result
-			: result != null
-				? { ...result, parsed: parseSummarizeResult(result.content) }
-				: undefined;
-	}
-
-	async generateCommitMessage(
-		changesOrRepo: string | string[] | Repository,
-		source: Source,
-		options?: {
-			cancellation?: CancellationToken;
-			context?: string;
-			generating?: Deferred<AIModel>;
-			progress?: ProgressOptions;
-		},
-	): Promise<AISummarizeResult | 'cancelled' | undefined> {
-		const result = await this.sendRequest(
-			'generate-commitMessage',
-			async (model, reporting, cancellation, maxInputTokens, retries) => {
-				const changes: string | undefined = await this.getChanges(changesOrRepo);
-				if (changes == null) throw new AINoRequestDataError('No changes to generate a commit message from.');
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const { prompt } = await this.getPrompt(
-					'generate-commitMessage',
-					model,
-					{
-						diff: changes,
-						context: options?.context,
-						instructions: configuration.get('ai.generateCommitMessage.customInstructions'),
-					},
-					maxInputTokens,
-					retries,
-					reporting,
-				);
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const messages: AIChatMessage[] = [{ role: 'user', content: prompt }];
-				return messages;
-			},
-			m => `Generating commit message with ${m.name}...`,
-			source,
-			m => ({
-				key: 'ai/generate',
-				data: {
-					type: 'commitMessage',
-					'model.id': m.id,
-					'model.provider.id': m.provider.id,
-					'model.provider.name': m.provider.name,
-					'retry.count': 0,
-				},
-			}),
-			{ ...options, modelOptions: { outputTokens: 4096 } },
-		);
-		return result === 'cancelled'
-			? result
-			: result != null
-				? { ...result, parsed: parseSummarizeResult(result.content) }
-				: undefined;
-	}
-
-	async generateCreatePullRequest(
-		repo: Repository,
-		baseRef: string,
-		headRef: string,
-		source: Source,
-		options?: {
-			cancellation?: CancellationToken;
-			context?: string;
-			generating?: Deferred<AIModel>;
-			progress?: ProgressOptions;
-		},
-	): Promise<AISummarizeResult | 'cancelled' | undefined> {
-		const result = await this.sendRequest(
-			'generate-create-pullRequest',
-			async (model, reporting, cancellation, maxInputTokens, retries) => {
-				const compareData = await prepareCompareDataForAIRequest(repo.git, headRef, baseRef, {
-					cancellation: cancellation,
-				});
-
-				if (!compareData?.diff || !compareData?.logMessages) {
-					throw new AINoRequestDataError('No changes to generate a pull request from.');
-				}
-
-				const { diff, logMessages } = compareData;
-				const { prompt } = await this.getPrompt(
-					'generate-create-pullRequest',
-					model,
-					{
-						diff: diff,
-						data: logMessages,
-						context: options?.context,
-						instructions: configuration.get('ai.generateCreatePullRequest.customInstructions'),
-					},
-					maxInputTokens,
-					retries,
-					reporting,
-				);
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const messages: AIChatMessage[] = [{ role: 'user', content: prompt }];
-				return messages;
-			},
-			m => `Generating pull request details with ${m.name}...`,
-			source,
-			m => ({
-				key: 'ai/generate',
-				data: {
-					type: 'createPullRequest',
-					'model.id': m.id,
-					'model.provider.id': m.provider.id,
-					'model.provider.name': m.provider.name,
-					'retry.count': 0,
-				},
-			}),
-			options,
-		);
-		return result === 'cancelled'
-			? result
-			: result != null
-				? { ...result, parsed: parseSummarizeResult(result.content) }
-				: undefined;
-	}
-
-	async generateCreateDraft(
-		changesOrRepo: string | string[] | Repository,
-		sourceContext: Source & { type: AIGenerateCreateDraftEventData['draftType'] },
-		options?: {
-			cancellation?: CancellationToken;
-			context?: string;
-			generating?: Deferred<AIModel>;
-			progress?: ProgressOptions;
-			codeSuggestion?: boolean;
-		},
-	): Promise<AISummarizeResult | 'cancelled' | undefined> {
-		const { type, ...source } = sourceContext;
-
-		const result = await this.sendRequest(
-			options?.codeSuggestion ? 'generate-create-codeSuggestion' : 'generate-create-cloudPatch',
-			async (model, reporting, cancellation, maxInputTokens, retries) => {
-				const changes: string | undefined = await this.getChanges(changesOrRepo);
-				if (changes == null) {
-					throw new AINoRequestDataError(
-						`No changes to generate a ${options?.codeSuggestion ? 'code suggestion' : 'cloud patch'} from.`,
-					);
-				}
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const { prompt } = await this.getPrompt(
-					options?.codeSuggestion ? 'generate-create-codeSuggestion' : 'generate-create-cloudPatch',
-					model,
-					{
-						diff: changes,
-						context: options?.context,
-						instructions: options?.codeSuggestion
-							? configuration.get('ai.generateCreateCodeSuggest.customInstructions')
-							: configuration.get('ai.generateCreateCloudPatch.customInstructions'),
-					},
-					maxInputTokens,
-					retries,
-					reporting,
-				);
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const messages: AIChatMessage[] = [{ role: 'user', content: prompt }];
-				return messages;
-			},
-			m =>
-				`Generating ${options?.codeSuggestion ? 'code suggestion' : 'cloud patch'} description with ${
-					m.name
-				}...`,
-			source,
-			m => ({
-				key: 'ai/generate',
-				data: {
-					type: 'draftMessage',
-					draftType: type,
-					'model.id': m.id,
-					'model.provider.id': m.provider.id,
-					'model.provider.name': m.provider.name,
-					'retry.count': 0,
-				},
-			}),
-			options,
-		);
-		return result === 'cancelled'
-			? result
-			: result != null
-				? { ...result, parsed: parseSummarizeResult(result.content) }
-				: undefined;
-	}
-
-	async generateStashMessage(
-		changesOrRepo: string | string[] | Repository,
-		source: Source,
-		options?: {
-			cancellation?: CancellationToken;
-			context?: string;
-			generating?: Deferred<AIModel>;
-			progress?: ProgressOptions;
-		},
-	): Promise<AISummarizeResult | 'cancelled' | undefined> {
-		const result = await this.sendRequest(
-			'generate-stashMessage',
-			async (model, reporting, cancellation, maxInputTokens, retries) => {
-				const changes: string | undefined = await this.getChanges(changesOrRepo);
-				if (changes == null) throw new AINoRequestDataError('No changes to generate a stash message from.');
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const { prompt } = await this.getPrompt(
-					'generate-stashMessage',
-					model,
-					{
-						diff: changes,
-						context: options?.context,
-						instructions: configuration.get('ai.generateStashMessage.customInstructions'),
-					},
-					maxInputTokens,
-					retries,
-					reporting,
-				);
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const messages: AIChatMessage[] = [{ role: 'user', content: prompt }];
-				return messages;
-			},
-			m => `Generating stash message with ${m.name}...`,
-			source,
-			m => ({
-				key: 'ai/generate',
-				data: {
-					type: 'stashMessage',
-					'model.id': m.id,
-					'model.provider.id': m.provider.id,
-					'model.provider.name': m.provider.name,
-					'retry.count': 0,
-				},
-			}),
-			{ ...options, modelOptions: { outputTokens: 1024 } },
-		);
-		return result === 'cancelled'
-			? result
-			: result != null
-				? { ...result, parsed: parseSummarizeResult(result.content) }
-				: undefined;
-	}
-
-	async generateChangelog(
-		changes: Lazy<Promise<AIGenerateChangelogChanges>>,
-		source: Source,
-		options?: { cancellation?: CancellationToken; progress?: ProgressOptions },
-	): Promise<AIResult | 'cancelled' | undefined> {
-		const result = await this.sendRequest(
-			'generate-changelog',
-			async (model, reporting, cancellation, maxInputTokens, retries) => {
-				const { changes: data } = await changes.value;
-				if (!data.length) throw new AINoRequestDataError('No changes to generate a changelog from.');
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const { prompt } = await this.getPrompt(
-					'generate-changelog',
-					model,
-					{
-						data: JSON.stringify(data),
-						instructions: configuration.get('ai.generateChangelog.customInstructions'),
-					},
-					maxInputTokens,
-					retries,
-					reporting,
-				);
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const messages: AIChatMessage[] = [{ role: 'user', content: prompt }];
-				return messages;
-			},
-			m => `Generating changelog with ${m.name}...`,
-			source,
-			m => ({
-				key: 'ai/generate',
-				data: {
-					type: 'changelog',
-					'model.id': m.id,
-					'model.provider.id': m.provider.id,
-					'model.provider.name': m.provider.name,
-					'retry.count': 0,
-				},
-			}),
-			options,
-		);
-		return result === 'cancelled' ? result : result != null ? { ...result } : undefined;
-	}
-
-	async generateSearchQuery(
-		search: { query: string; context: string | undefined },
-		source: Source,
-		options?: { cancellation?: CancellationToken; progress?: ProgressOptions },
-	): Promise<AIResult | 'cancelled' | undefined> {
-		const result = await this.sendRequest(
-			'generate-searchQuery',
-			async (model, reporting, cancellation, maxInputTokens, retries) => {
-				const { prompt } = await this.getPrompt(
-					'generate-searchQuery',
-					model,
-					{
-						query: search.query,
-						context: search.context,
-						instructions: configuration.get('ai.generateSearchQuery.customInstructions'),
-					},
-					maxInputTokens,
-					retries,
-					reporting,
-				);
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const messages: AIChatMessage[] = [{ role: 'user', content: prompt }];
-				return messages;
-			},
-			m => `Generating search query with ${m.name}...`,
-			source,
-			m => ({
-				key: 'ai/generate',
-				data: {
-					type: 'searchQuery',
-					'model.id': m.id,
-					'model.provider.id': m.provider.id,
-					'model.provider.name': m.provider.name,
-					'retry.count': 0,
-				},
-			}),
-			options,
-		);
-		return result === 'cancelled' ? result : result != null ? { ...result } : undefined;
-	}
-
-	async generateRebase(
-		repo: Repository,
-		baseRef: string,
-		headRef: string,
-		source: Source,
-		options?: {
-			cancellation?: CancellationToken;
-			context?: string;
-			generating?: Deferred<AIModel>;
-			progress?: ProgressOptions;
-			generateCommits?: boolean;
-		},
-	): Promise<AIRebaseResult | 'cancelled' | undefined> {
-		const result: Mutable<AIRebaseResult> = {
-			diff: undefined!,
-			explanation: undefined!,
-			hunkMap: [],
-			commits: [],
-		} as unknown as AIRebaseResult;
-
-		const confirmed = this.container.storage.get(
-			options?.generateCommits ? 'confirm:ai:generateCommits' : 'confirm:ai:generateRebase',
-			false,
-		);
-		if (!confirmed) {
-			const accept: MessageItem = { title: 'Continue' };
-			const cancel: MessageItem = { title: 'Cancel', isCloseAffordance: true };
-
-			const result = await window.showInformationMessage(
-				`This will ${
-					options?.generateCommits
-						? 'stash all of your changes and commit directly to your current branch'
-						: 'create a new branch at the chosen commit and commit directly to that branch'
-				}.`,
-				{ modal: true },
-				accept,
-				cancel,
-			);
-
-			if (result === cancel) {
-				return undefined;
-			} else if (result === accept) {
-				await this.container.storage.store(
-					options?.generateCommits ? 'confirm:ai:generateCommits' : 'confirm:ai:generateRebase',
-					true,
-				);
-			}
-		}
-
-		const rq = await this.sendRequest(
-			'generate-rebase',
-			async (model, reporting, cancellation, maxInputTokens, retries) => {
-				const diff = await repo.git.diff.getDiff?.(headRef, baseRef, { notation: '...' });
-				if (!diff?.contents) {
-					throw new AINoRequestDataError(
-						`No changes found to generate ${options?.generateCommits ? 'commits' : 'a rebase'} from.`,
-					);
-				}
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				result.diff = diff.contents;
-
-				const hunkMap: { index: number; hunkHeader: string }[] = [];
-				let counter = 0;
-				//const filesDiffs = await repo.git.diff().getDiffFiles!(diff.contents)!;
-				//for (const f of filesDiffs!.files)
-				//for (const hunk of parsedDiff.hunks) {
-				//	hunkMap.push({ index: ++counter, hunkHeader: hunk.contents.split('\n', 1)[0] });
-				//}
-
-				// let hunksByNumber= '';
-
-				for (const hunkHeader of diff.contents.matchAll(/@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(.*)$/gm)) {
-					hunkMap.push({ index: ++counter, hunkHeader: hunkHeader[0] });
-				}
-
-				result.hunkMap = hunkMap;
-				// 	const hunkNumber = `hunk-${counter++}`;
-				// 	hunksByNumber += `${hunkNumber}: ${hunk[0]}\n`;
-				// }
-
-				// const commits: { diff: string; message: string }[] = [];
-				// for (const commit of [...log.commits.values()].sort((a, b) => a.date.getTime() - b.date.getTime())) {
-				// 	const diff = await repo.git.diff().getDiff?.(commit.ref);
-				// 	commits.push({ message: commit.message ?? commit.summary, diff: diff?.contents ?? '' });
-
-				// 	if (cancellation.isCancellationRequested) throw new CancellationError();
-				// }
-
-				const { prompt } = await this.getPrompt(
-					'generate-rebase',
-					model,
-					{
-						diff: diff.contents,
-						// commits: JSON.stringify(commits),
-						data: JSON.stringify(hunkMap),
-						context: options?.context,
-						// instructions: configuration.get('ai.generateRebase.customInstructions'),
-					},
-					maxInputTokens,
-					retries,
-					reporting,
-				);
-				if (cancellation.isCancellationRequested) throw new CancellationError();
-
-				const messages: AIChatMessage[] = [{ role: 'user', content: prompt }];
-				return messages;
-			},
-			m => `Generating ${options?.generateCommits ? 'commits' : 'rebase'} with ${m.name}...`,
-			source,
-			m => ({
-				key: 'ai/generate',
-				data: {
-					type: 'rebase',
-					'model.id': m.id,
-					'model.provider.id': m.provider.id,
-					'model.provider.name': m.provider.name,
-					'retry.count': 0,
-				},
-			}),
-			options,
-		);
-
-		if (rq === 'cancelled') return rq;
-
-		if (rq == null) return undefined;
-
-		try {
-			// if it is wrapped in markdown, we need to strip it
-			const content = rq.content.replace(/^\s*```json\s*/, '').replace(/\s*```$/, '');
-			// Parse the JSON content from the result
-			result.commits = JSON.parse(content) as AIRebaseResult['commits'];
-
-			const inputHunkIndices = result.hunkMap.map(h => h.index);
-			const outputHunkIndices = new Set(result.commits.flatMap(c => c.hunks.map(h => h.hunk)));
-
-			// Find any missing or extra hunks
-			const missingHunks = inputHunkIndices.filter(i => !outputHunkIndices.has(i));
-			const extraHunks = [...outputHunkIndices].filter(i => !inputHunkIndices.includes(i));
-			if (missingHunks.length > 0 || extraHunks.length > 0) {
-				let hunksMessage = '';
-				if (missingHunks.length > 0) {
-					const pluralize = missingHunks.length > 1 ? 's' : '';
-					hunksMessage += ` ${missingHunks.length} missing hunk${pluralize}.`;
-				}
-				if (extraHunks.length > 0) {
-					const pluralize = extraHunks.length > 1 ? 's' : '';
-					hunksMessage += ` ${extraHunks.length} extra hunk${pluralize}.`;
-				}
-
-				throw new Error(
-					`Invalid response in generating ${
-						options?.generateCommits ? 'commits' : 'rebase'
-					} result.${hunksMessage} Try again or select a different AI model.`,
-				);
-			}
-		} catch (ex) {
-			debugger;
-			if (ex?.message?.includes('Invalid response in generating')) {
-				throw ex;
-			}
-			throw new Error(`Unable to parse ${options?.generateCommits ? 'commits' : 'rebase'} result`);
-		}
-
-		return {
-			...rq,
-			...result,
-		};
-	}
-
-	private async sendRequest<T extends AIActionType>(
+	@debug({
+		args: (action, model, _, source) => ({
+			action: action,
+			model: model ? `${model.provider.id}/${model.id}` : undefined,
+			source: source,
+		}),
+	})
+	async sendRequest<T extends AIActionType>(
 		action: T,
-		getMessages: (
-			model: AIModel,
-			reporting: TelemetryEvents['ai/generate' | 'ai/explain'],
-			cancellation: CancellationToken,
-			maxCodeCharacters: number,
-			retries: number,
-		) => Promise<AIChatMessage[]>,
-		getProgressTitle: (model: AIModel) => string,
+		model: AIModel | undefined,
+		provider: AIRequestProvider,
 		source: Source,
-		getTelemetryInfo: (model: AIModel) => {
-			key: 'ai/generate' | 'ai/explain';
-			data: TelemetryEvents['ai/generate' | 'ai/explain'];
-		},
 		options?: {
 			cancellation?: CancellationToken;
 			generating?: Deferred<AIModel>;
 			modelOptions?: { outputTokens?: number; temperature?: number };
 			progress?: ProgressOptions;
 		},
-	): Promise<AIRequestResult | 'cancelled' | undefined> {
+	): Promise<AIProviderResult<void> | 'cancelled' | undefined> {
+		const scope = getScopedLogger();
+		if (model != null) {
+			scope?.addExitInfo(`model: ${model.provider.id}/${model.id}`);
+		}
+
 		if (!(await this.ensureFeatureAccess(action, source))) {
+			scope?.setFailed('cancelled: no feature access');
 			return 'cancelled';
 		}
 
-		const model = await this.getModel(undefined, source);
-		if (options?.cancellation?.isCancellationRequested) {
-			options?.generating?.cancel();
-			return 'cancelled';
-		}
-
+		model ??= await this.getModel(undefined, source);
 		if (model == null || options?.cancellation?.isCancellationRequested) {
+			scope?.setFailed(model != null ? 'cancelled: user cancelled' : 'cancelled: no model set');
 			options?.generating?.cancel();
-			return undefined;
+			return 'cancelled';
 		}
 
-		const telementry = getTelemetryInfo(model);
+		const telementry = provider.getTelemetryInfo(model, 0);
 
 		const cancellationSource = new CancellationTokenSource();
 		if (options?.cancellation) {
@@ -1158,6 +666,9 @@ export class AIProviderService implements Disposable {
 
 		const confirmed = await showConfirmAIProviderToS(this.container.storage);
 		if (!confirmed || cancellation.isCancellationRequested) {
+			scope?.setFailed(
+				cancellation.isCancellationRequested ? 'cancelled: user cancelled' : 'cancelled: user declined ToS',
+			);
 			this.container.telemetry.sendEvent(
 				telementry.key,
 				{
@@ -1172,9 +683,27 @@ export class AIProviderService implements Disposable {
 			return 'cancelled';
 		}
 
-		const apiKey = await this._provider!.getApiKey(false);
+		let apiKey: string | undefined;
+		try {
+			apiKey = await this._provider!.getApiKey(false);
+		} catch (ex) {
+			if (isCancellationError(ex)) {
+				scope?.setFailed('cancelled: user cancelled');
+				this.container.telemetry.sendEvent(
+					telementry.key,
+					{ ...telementry.data, failed: true, 'failed.reason': 'user-cancelled' },
+					source,
+				);
+
+				options?.generating?.cancel();
+				return 'cancelled';
+			}
+
+			throw ex;
+		}
 
 		if (cancellation.isCancellationRequested) {
+			scope?.setFailed('cancelled: user cancelled');
 			this.container.telemetry.sendEvent(
 				telementry.key,
 				{ ...telementry.data, failed: true, 'failed.reason': 'user-cancelled' },
@@ -1186,6 +715,7 @@ export class AIProviderService implements Disposable {
 		}
 
 		if (apiKey == null) {
+			scope?.setFailed('failed: Not authorized');
 			this.container.telemetry.sendEvent(
 				telementry.key,
 				{ ...telementry.data, failed: true, 'failed.reason': 'error', 'failed.error': 'Not authorized' },
@@ -1196,11 +726,11 @@ export class AIProviderService implements Disposable {
 			return undefined;
 		}
 
-		const promise = this._provider!.sendRequest(
+		const requestPromise = this._provider!.sendRequest(
 			action,
 			model,
 			apiKey,
-			getMessages.bind(this, model, telementry.data, cancellation),
+			provider.getMessages.bind(this, model, telementry.data, cancellation),
 			{
 				cancellation: cancellation,
 				modelOptions: options?.modelOptions,
@@ -1209,237 +739,369 @@ export class AIProviderService implements Disposable {
 		options?.generating?.fulfill(model);
 
 		const start = Date.now();
-		try {
-			const result = await (options?.progress != null
-				? window.withProgress(
-						{ ...options.progress, cancellable: true, title: getProgressTitle(model) },
-						(_progress, token) => {
-							token.onCancellationRequested(() => cancellationSource.cancel());
-							return promise;
-						},
-					)
-				: promise);
+		const promise = (async (): Promise<AIProviderResponse<void> | 'cancelled' | undefined> => {
+			try {
+				const result = await (options?.progress != null
+					? window.withProgress(
+							{ ...options.progress, cancellable: true, title: provider.getProgressTitle(model, 0) },
+							(_progress, token) => {
+								token.onCancellationRequested(() => cancellationSource.cancel());
+								return requestPromise;
+							},
+						)
+					: requestPromise);
 
-			telementry.data['output.length'] = result?.content?.length;
-			telementry.data['usage.promptTokens'] = result?.usage?.promptTokens;
-			telementry.data['usage.completionTokens'] = result?.usage?.completionTokens;
-			telementry.data['usage.totalTokens'] = result?.usage?.totalTokens;
-			telementry.data['usage.limits.used'] = result?.usage?.limits?.used;
-			telementry.data['usage.limits.limit'] = result?.usage?.limits?.limit;
-			telementry.data['usage.limits.resetsOn'] = result?.usage?.limits?.resetsOn?.toISOString();
-			this.container.telemetry.sendEvent(
-				telementry.key,
-				{ ...telementry.data, duration: Date.now() - start },
-				source,
-			);
+				telementry.data['output.length'] = result?.content?.length;
+				telementry.data['usage.promptTokens'] = result?.usage?.promptTokens;
+				telementry.data['usage.completionTokens'] = result?.usage?.completionTokens;
+				telementry.data['usage.totalTokens'] = result?.usage?.totalTokens;
+				telementry.data['usage.limits.used'] = result?.usage?.limits?.used;
+				telementry.data['usage.limits.limit'] = result?.usage?.limits?.limit;
+				telementry.data['usage.limits.resetsOn'] = result?.usage?.limits?.resetsOn?.toISOString();
 
-			if (!isGkModel) {
-				void this.showAiAllAccessNotificationIfNeeded();
-			}
-
-			return result;
-		} catch (ex) {
-			if (ex instanceof CancellationError) {
+				scope?.addExitInfo(`id: ${result?.id}`);
 				this.container.telemetry.sendEvent(
 					telementry.key,
-					{
-						...telementry.data,
-						duration: Date.now() - start,
-						failed: true,
-						'failed.reason': 'user-cancelled',
-					},
+					{ ...telementry.data, duration: Date.now() - start, id: result?.id },
 					source,
 				);
 
-				return 'cancelled';
-			}
-			if (ex instanceof AIError) {
-				this.container.telemetry.sendEvent(
-					telementry.key,
-					{
-						...telementry.data,
-						duration: Date.now() - start,
-						failed: true,
-						// eslint-disable-next-line @typescript-eslint/no-base-to-string
-						'failed.error': String(ex),
-						'failed.error.detail': String(ex.original),
-					},
-					source,
-				);
-
-				switch (ex.reason) {
-					case AIErrorReason.NoRequestData:
-						void window.showInformationMessage(ex.message);
-						return undefined;
-
-					case AIErrorReason.NoEntitlement: {
-						const sub = await this.container.subscription.getSubscription();
-
-						if (isSubscriptionPaid(sub)) {
-							const plan =
-								compareSubscriptionPlans(sub.plan.actual.id, 'advanced') <= 0 ? 'teams' : 'advanced';
-
-							const upgrade = { title: `Upgrade to ${getSubscriptionPlanName(plan)}` };
-							const result = await window.showErrorMessage(
-								"This AI feature isn't included in your current plan. Please upgrade and try again.",
-								upgrade,
-							);
-
-							if (result === upgrade) {
-								void this.container.subscription.manageSubscription(source);
-							}
-						} else {
-							// Users without accounts would never get here since they would have been blocked by `ensureFeatureAccess`
-							const upgrade = { title: 'Upgrade to Pro' };
-							const result = await window.showErrorMessage(
-								'Please upgrade to GitLens Pro to access this AI feature and try again.',
-								upgrade,
-							);
-
-							if (result === upgrade) {
-								void this.container.subscription.upgrade('pro', source);
-							}
-						}
-
-						return undefined;
-					}
-					case AIErrorReason.RequestTooLarge: {
-						const switchModel: MessageItem = { title: 'Switch Model' };
-						const result = await window.showErrorMessage(
-							'Your request is too large. Please reduce the size of your request or switch to a different model, and then try again.',
-							switchModel,
-						);
-						if (result === switchModel) {
-							void this.switchModel(source);
-						}
-						return undefined;
-					}
-					case AIErrorReason.UserQuotaExceeded: {
-						const increaseLimit: MessageItem = { title: 'Increase Limit' };
-						const result = await window.showErrorMessage(
-							"Your request could not be completed because you've reached the weekly Al usage limit for your current plan. Upgrade to unlock more Al-powered actions.",
-							increaseLimit,
-						);
-
-						if (result === increaseLimit) {
-							void this.container.subscription.manageSubscription(source);
-						}
-
-						return undefined;
-					}
-					case AIErrorReason.RateLimitExceeded: {
-						const switchModel: MessageItem = { title: 'Switch Model' };
-						const result = await window.showErrorMessage(
-							'Rate limit exceeded. Please wait a few moments or switch to a different model, and then try again.',
-							switchModel,
-						);
-						if (result === switchModel) {
-							void this.switchModel(source);
-						}
-
-						return undefined;
-					}
-					case AIErrorReason.RateLimitOrFundsExceeded: {
-						const switchModel: MessageItem = { title: 'Switch Model' };
-						const result = await window.showErrorMessage(
-							'Rate limit exceeded, or your account is out of funds. Please wait a few moments, check your account balance, or switch to a different model, and then try again.',
-							switchModel,
-						);
-						if (result === switchModel) {
-							void this.switchModel(source);
-						}
-						return undefined;
-					}
-					case AIErrorReason.ServiceCapacityExceeded: {
-						void window.showErrorMessage(
-							'GitKraken AI is temporarily unable to process your request due to high volume. Please wait a few moments and try again. If this issue persists, please contact support.',
-							'OK',
-						);
-						return undefined;
-					}
-					case AIErrorReason.ModelNotSupported: {
-						const switchModel: MessageItem = { title: 'Switch Model' };
-						const result = await window.showErrorMessage(
-							'The selected model is not supported for this request. Please select a different model and try again.',
-							switchModel,
-						);
-						if (result === switchModel) {
-							void this.switchModel(source);
-						}
-						return undefined;
-					}
-					case AIErrorReason.Unauthorized: {
-						const switchModel: MessageItem = { title: 'Switch Model' };
-						const result = await window.showErrorMessage(
-							'You do not have access to the selected model. Please select a different model and try again.',
-							switchModel,
-						);
-						if (result === switchModel) {
-							void this.switchModel(source);
-						}
-						return undefined;
-					}
-					case AIErrorReason.DeniedByUser: {
-						const switchModel: MessageItem = { title: 'Switch Model' };
-						const result = await window.showErrorMessage(
-							'You have denied access to the selected model. Please provide access or select a different model, and then try again.',
-							switchModel,
-						);
-						if (result === switchModel) {
-							void this.switchModel(source);
-						}
-						return undefined;
-					}
+				if (!isGkModel) {
+					void this.showAiAllAccessNotificationIfNeeded();
 				}
 
-				return undefined;
-			}
+				return result;
+			} catch (ex) {
+				if (ex instanceof CancellationError) {
+					scope?.setFailed('cancelled: user cancelled');
+					this.container.telemetry.sendEvent(
+						telementry.key,
+						{
+							...telementry.data,
+							duration: Date.now() - start,
+							failed: true,
+							'failed.reason': 'user-cancelled',
+						},
+						source,
+					);
 
-			this.container.telemetry.sendEvent(
-				telementry.key,
-				{
-					...telementry.data,
-					duration: Date.now() - start,
-					failed: true,
-					'failed.error': String(ex),
-					'failed.error.detail': ex.original ? String(ex.original) : undefined,
-				},
-				source,
-			);
-			throw ex;
-		}
+					return 'cancelled';
+				}
+				if (ex instanceof AIError) {
+					scope?.setFailed(`failed: ${String(ex)} (${String(ex.original)})`);
+
+					this.container.telemetry.sendEvent(
+						telementry.key,
+						{
+							...telementry.data,
+							duration: Date.now() - start,
+							failed: true,
+							'failed.error': String(ex),
+							'failed.error.detail': String(ex.original),
+						},
+						source,
+					);
+
+					switch (ex.reason) {
+						case AIErrorReason.NoRequestData:
+							void window.showInformationMessage(ex.message);
+							return undefined;
+
+						case AIErrorReason.NoEntitlement: {
+							const sub = await this.container.subscription.getSubscription();
+
+							if (isSubscriptionPaid(sub)) {
+								const plan =
+									compareSubscriptionPlans(sub.plan.actual.id, 'advanced') <= 0
+										? 'teams'
+										: 'advanced';
+
+								const upgrade = { title: `Upgrade to ${getSubscriptionPlanName(plan)}` };
+								const result = await window.showErrorMessage(
+									"This AI feature isn't included in your current plan. Please upgrade and try again.",
+									upgrade,
+								);
+
+								if (result === upgrade) {
+									void this.container.subscription.manageSubscription(source);
+								}
+							} else {
+								// Users without accounts would never get here since they would have been blocked by `ensureFeatureAccess`
+								const upgrade = { title: 'Upgrade to Pro' };
+								const result = await window.showErrorMessage(
+									'Please upgrade to GitLens Pro to access this AI feature and try again.',
+									upgrade,
+								);
+
+								if (result === upgrade) {
+									void this.container.subscription.upgrade('pro', source);
+								}
+							}
+
+							return undefined;
+						}
+						case AIErrorReason.RequestTooLarge: {
+							const switchModel: MessageItem = { title: 'Switch Model' };
+							const result = await window.showErrorMessage(
+								'Your request is too large. Please reduce the size of your request or switch to a different model, and then try again.',
+								switchModel,
+							);
+							if (result === switchModel) {
+								void this.switchModel(source);
+							}
+							return undefined;
+						}
+						case AIErrorReason.UserQuotaExceeded: {
+							const increaseLimit: MessageItem = { title: 'Increase Limit' };
+							const result = await window.showErrorMessage(
+								"Your request could not be completed because you've reached the weekly AI usage limit for your current plan. Upgrade to unlock more AI-powered actions.",
+								increaseLimit,
+							);
+
+							if (result === increaseLimit) {
+								void this.container.subscription.manageSubscription(source);
+							}
+
+							return undefined;
+						}
+						case AIErrorReason.RateLimitExceeded: {
+							const switchModel: MessageItem = { title: 'Switch Model' };
+							const result = await window.showErrorMessage(
+								'Rate limit exceeded. Please wait a few moments or switch to a different model, and then try again.',
+								switchModel,
+							);
+							if (result === switchModel) {
+								void this.switchModel(source);
+							}
+
+							return undefined;
+						}
+						case AIErrorReason.RateLimitOrFundsExceeded: {
+							const switchModel: MessageItem = { title: 'Switch Model' };
+							const result = await window.showErrorMessage(
+								'Rate limit exceeded, or your account is out of funds. Please wait a few moments, check your account balance, or switch to a different model, and then try again.',
+								switchModel,
+							);
+							if (result === switchModel) {
+								void this.switchModel(source);
+							}
+							return undefined;
+						}
+						case AIErrorReason.ServiceCapacityExceeded: {
+							void window.showErrorMessage(
+								'GitKraken AI is temporarily unable to process your request due to high volume. Please wait a few moments and try again. If this issue persists, please contact support.',
+								'OK',
+							);
+							return undefined;
+						}
+						case AIErrorReason.ModelNotSupported: {
+							const switchModel: MessageItem = { title: 'Switch Model' };
+							const result = await window.showErrorMessage(
+								'The selected model is not supported for this request. Please select a different model and try again.',
+								switchModel,
+							);
+							if (result === switchModel) {
+								void this.switchModel(source);
+							}
+							return undefined;
+						}
+						case AIErrorReason.Unauthorized: {
+							const switchModel: MessageItem = { title: 'Switch Model' };
+							const result = await window.showErrorMessage(
+								'You do not have access to the selected model. Please select a different model and try again.',
+								switchModel,
+							);
+							if (result === switchModel) {
+								void this.switchModel(source);
+							}
+							return undefined;
+						}
+						case AIErrorReason.DeniedByUser: {
+							const switchModel: MessageItem = { title: 'Switch Model' };
+							const result = await window.showErrorMessage(
+								'You have denied access to the selected model. Please provide access or select a different model, and then try again.',
+								switchModel,
+							);
+							if (result === switchModel) {
+								void this.switchModel(source);
+							}
+							return undefined;
+						}
+					}
+
+					return undefined;
+				}
+
+				scope?.setFailed(`failed: ${String(ex)}${ex.original ? ` (${String(ex.original)})` : ''}`);
+				this.container.telemetry.sendEvent(
+					telementry.key,
+					{
+						...telementry.data,
+						duration: Date.now() - start,
+						failed: true,
+						'failed.error': String(ex),
+						'failed.error.detail': ex.original ? String(ex.original) : undefined,
+					},
+					source,
+				);
+				throw ex;
+			}
+		})();
+
+		return { model: model, promise: promise };
 	}
 
-	private async getChanges(
+	/**
+	 * Generic conversation loop for AI requests with validation and retry logic.
+	 *
+	 * This method handles the common pattern of:
+	 * 1. Making an AI request
+	 * 2. Validating the response
+	 * 3. If invalid, continuing the conversation with feedback
+	 * 4. Retrying up to maxAttempts times
+	 *
+	 * @template TResult The type of the final result after validation
+	 */
+	@debug({
+		args: (action, model, _, source) => ({
+			action: action,
+			model: model ? `${model.provider.id}/${model.id}` : undefined,
+			source: source,
+		}),
+	})
+	async sendRequestConversation<TResult>(
+		action: AIActionType,
+		model: AIModel | undefined,
+		provider: AIConversationProvider<TResult>,
+		source: Source,
+		options?: {
+			cancellation?: CancellationToken;
+			generating?: Deferred<AIModel>;
+			progress?: ProgressOptions;
+			modelOptions?: { outputTokens?: number; temperature?: number };
+			maxAttempts?: number;
+		},
+	): Promise<{ response: AIProviderResponse<void>; result: TResult } | 'cancelled' | undefined> {
+		const maxAttempts = options?.maxAttempts ?? 4;
+		let attempt = 0;
+		let response: AIProviderResponse<void> | 'cancelled' | undefined;
+
+		// Conversation loop
+		while (attempt < maxAttempts) {
+			// Capture attempt for closures
+			const currentAttempt = attempt;
+
+			const result = await this.sendRequest(
+				action,
+				model,
+				{
+					getMessages: provider.getMessages,
+					getProgressTitle: model => provider.getProgressTitle(model, currentAttempt),
+					getTelemetryInfo: model => provider.getTelemetryInfo(model, currentAttempt),
+				},
+				source,
+				options,
+			);
+			if (result == null || result === 'cancelled') return result;
+
+			// Await the promise to get the actual response
+			response = await result.promise;
+
+			if (response === 'cancelled' || response == null) {
+				return response;
+			}
+
+			// Validate response
+			const validationResult = provider.validateResponse(response, attempt);
+
+			if (validationResult.isValid) {
+				return { response: response, result: validationResult.result };
+			}
+
+			Logger.warn(
+				undefined,
+				'AIProviderService',
+				'sendRequestWithConversation',
+				`Validation failed on attempt ${attempt + 1}: ${validationResult.errorMessage}`,
+			);
+
+			// If this was the last attempt, throw the error
+			if (attempt === maxAttempts - 1) {
+				throw new Error(validationResult.errorMessage);
+			}
+
+			// Handler needs to append retry prompt to conversation for next iteration
+			// This is done in the getMessages callback
+
+			attempt++;
+		}
+
+		return undefined;
+	}
+
+	async getChanges(
 		changesOrRepo: string | string[] | Repository,
 		options?: { cancellation?: CancellationToken; context?: string; progress?: ProgressOptions },
 	): Promise<string | undefined> {
 		let changes: string;
+		let repoPath: string | undefined;
+
 		if (typeof changesOrRepo === 'string') {
 			changes = changesOrRepo;
 		} else if (Array.isArray(changesOrRepo)) {
 			changes = changesOrRepo.join('\n');
 		} else {
+			repoPath = changesOrRepo.path;
 			let diff = await changesOrRepo.git.diff.getDiff?.(uncommittedStaged);
 			if (!diff?.contents) {
 				diff = await changesOrRepo.git.diff.getDiff?.(uncommitted);
-				if (!diff?.contents) throw new Error('No changes to generate a commit message from.');
+				if (!diff?.contents) throw new AINoRequestDataError('No changes to generate a commit message from.');
 			}
 			if (options?.cancellation?.isCancellationRequested) return undefined;
 
 			changes = diff.contents;
 		}
 
+		// Filter ignored files when we have a repository path
+		if (repoPath != null && changes) {
+			const aiIgnore = new AIIgnoreCache(this.container, repoPath);
+			changes = await filterDiffFiles(changes, paths => aiIgnore.excludeIgnored(paths));
+		}
+
 		return changes;
 	}
 
-	private async getPrompt<T extends PromptTemplateType>(
+	async getPrompt<T extends PromptTemplateType>(
 		templateType: T,
 		model: AIModel,
 		context: PromptTemplateContext<T>,
-		maxInputTokens: number,
-		retries: number,
-		reporting: TelemetryEvents['ai/generate' | 'ai/explain'],
+		maxInputTokens: number | undefined,
+		retries: number | undefined,
+		reporting: TelemetryEvents['ai/generate' | 'ai/explain'] | undefined,
+		truncationHandler?: TruncationHandler<T>,
+		options?: ResolvePromptOptions,
+	): Promise<{ prompt: string; truncated: boolean }>;
+
+	async getPrompt<T extends PromptTemplateType>(
+		templateType: T,
+		model: undefined,
+		context: PromptTemplateContext<T>,
+		maxInputTokens?: undefined,
+		retries?: undefined,
+		reporting?: undefined,
+		truncationHandler?: undefined,
+		options?: undefined,
+	): Promise<{ prompt: string; truncated: boolean }>;
+
+	async getPrompt<T extends PromptTemplateType>(
+		templateType: T,
+		model: AIModel | undefined,
+		context: PromptTemplateContext<T>,
+		maxInputTokens?: number | undefined,
+		retries?: number | undefined,
+		reporting?: TelemetryEvents['ai/generate' | 'ai/explain'] | undefined,
+		truncationHandler?: TruncationHandler<T>,
+		options?: ResolvePromptOptions,
 	): Promise<{ prompt: string; truncated: boolean }> {
 		const promptTemplate = await this.getPromptTemplate(templateType, model);
 		if (promptTemplate == null) {
@@ -1451,20 +1113,39 @@ export class AIProviderService implements Disposable {
 			context.instructions = `Carefully follow these additional instructions (provided directly by the user), but do not deviate from the output structure:\n${context.instructions}`;
 		}
 
-		const result = await resolvePrompt(model, promptTemplate, context, maxInputTokens, retries, reporting);
-		return result;
+		// Handle the two overload cases
+		if (model == null) {
+			return resolvePrompt(undefined, promptTemplate, context, undefined, undefined, undefined, undefined);
+		}
+
+		return resolvePrompt(
+			model,
+			promptTemplate,
+			context,
+			maxInputTokens,
+			retries,
+			reporting,
+			truncationHandler,
+			options,
+		);
 	}
 
+	@trace({
+		args: (templateType, model) => ({
+			templateType: templateType,
+			model: model ? `${model.provider.id}/${model.id}` : undefined,
+		}),
+	})
 	private async getPromptTemplate<T extends PromptTemplateType>(
 		templateType: T,
-		model: AIModel,
+		model: AIModel | undefined,
 	): Promise<PromptTemplate | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const template = getLocalPromptTemplate(templateType, model);
 		const templateId = template?.id ?? templateType;
 
-		return this._promptTemplates.get(templateId, async cancellable => {
+		return this._promptTemplates.getOrCreate(templateId, async cancellable => {
 			if (!(await this.container.subscription.getSubscription()).account) {
 				return template;
 			}
@@ -1505,10 +1186,10 @@ export class AIProviderService implements Disposable {
 					variables: result.data.variables as (keyof PromptTemplateContext<T>)[],
 				} satisfies PromptTemplate<T>;
 			} catch (ex) {
-				cancellable.cancel();
+				cancellable.invalidate();
 				if (!(ex instanceof AuthenticationRequiredError)) {
 					debugger;
-					Logger.error(ex, scope, String(ex));
+					scope?.error(ex, String(ex));
 				}
 				return template;
 			}
@@ -1571,7 +1252,6 @@ export class AIProviderService implements Disposable {
 		void this.container.storage.deleteWithPrefix(`confirm:ai:tos`);
 		void this.container.storage.deleteWorkspaceWithPrefix(`confirm:ai:tos`);
 		void this.container.storage.deleteWithPrefix(`confirm:ai:generateCommits`);
-		void this.container.storage.deleteWithPrefix(`confirm:ai:generateRebase`);
 	}
 
 	resetProviderKey(provider: AIProviders, silent?: boolean): void {
@@ -1609,22 +1289,32 @@ export class AIProviderService implements Disposable {
 		const alreadyCompleted = this.container.storage.get(`gk:promo:${userId}:ai:allAccess:dismissed`, false);
 		if (notificationShown || alreadyCompleted) return;
 
-		const hasAdvancedOrHigher = subscription.plan &&
+		const hasAdvancedOrHigher =
+			subscription.plan &&
 			(compareSubscriptionPlans(subscription.plan.actual.id, 'advanced') >= 0 ||
-			 compareSubscriptionPlans(subscription.plan.effective.id, 'advanced') >= 0);
+				compareSubscriptionPlans(subscription.plan.effective.id, 'advanced') >= 0);
 
 		let body = 'All Access Week - now until July 11th!';
-		const detail = hasAdvancedOrHigher ? 'Opt in now to get unlimited GitKraken AI until July 11th!' : 'Opt in now to try all Advanced GitLens features with unlimited GitKraken AI for FREE until July 11th!';
+		const detail = hasAdvancedOrHigher
+			? 'Opt in now to get unlimited GitKraken AI until July 11th!'
+			: 'Opt in now to try all Advanced GitLens features with unlimited GitKraken AI for FREE until July 11th!';
 
 		if (!usingGkProvider) {
 			body += ` ${detail}`;
 		}
 
-		const optInButton: MessageItem = usingGkProvider ? { title: 'Opt in for Unlimited AI' } : { title: 'Opt in and Switch to GitKraken AI' };
+		const optInButton: MessageItem = usingGkProvider
+			? { title: 'Opt in for Unlimited AI' }
+			: { title: 'Opt in and Switch to GitKraken AI' };
 		const dismissButton: MessageItem = { title: 'No, Thanks', isCloseAffordance: true };
 
 		// Show the notification
-		const result = await window.showInformationMessage(body, { modal: usingGkProvider, detail: detail }, optInButton, dismissButton);
+		const result = await window.showInformationMessage(
+			body,
+			{ modal: usingGkProvider, detail: detail },
+			optInButton,
+			dismissButton,
+		);
 
 		// Mark notification as shown regardless of user action
 		void this.container.storage.store(`gk:promo:${userId}:ai:allAccess:notified`, true);
@@ -1638,7 +1328,9 @@ export class AIProviderService implements Disposable {
 	private async allAccessOptIn(usingGkProvider?: boolean): Promise<void> {
 		const optIn = await this.container.subscription.aiAllAccessOptIn({ source: 'notification' });
 		if (optIn && !usingGkProvider && isProviderEnabledByOrg('gitkraken')) {
-			const gkProvider = new GitKrakenProvider(this.container, this.connection);
+			const gkProvider = new (
+				await import(/* webpackChunkName: "ai" */ './gitkrakenProvider.js')
+			).GitKrakenProvider(this.container, this.connection);
 			const defaultModel = (await gkProvider.getModels()).find(m => m.default);
 			if (defaultModel != null) {
 				this._provider = gkProvider;
@@ -1647,7 +1339,10 @@ export class AIProviderService implements Disposable {
 					await configuration.updateEffective('ai.model', 'gitkraken');
 					await configuration.updateEffective(`ai.gitkraken.model`, defaultModel.id);
 				} else {
-					await configuration.updateEffective('ai.model', `gitkraken:${defaultModel.id}` as SupportedAIModels);
+					await configuration.updateEffective(
+						'ai.model',
+						`gitkraken:${defaultModel.id}` as SupportedAIModels,
+					);
 				}
 
 				this._onDidChangeModel.fire({ model: defaultModel });
@@ -1655,8 +1350,6 @@ export class AIProviderService implements Disposable {
 		}
 	}
 }
-
-
 
 async function showConfirmAIProviderToS(storage: Storage): Promise<boolean> {
 	const confirmed = storage.get(`confirm:ai:tos`, false) || storage.getWorkspace(`confirm:ai:tos`, false);
@@ -1687,114 +1380,10 @@ async function showConfirmAIProviderToS(storage: Storage): Promise<boolean> {
 	return false;
 }
 
-function parseSummarizeResult(result: string): NonNullable<AISummarizeResult['parsed']> {
-	result = result.trim();
-	const summary = result.match(/<summary>([\s\S]*?)(?:<\/summary>|$)/)?.[1]?.trim() ?? undefined;
-	if (summary != null) {
-		result = result.replace(/<summary>[\s\S]*?(?:<\/summary>|$)/, '').trim();
-	}
-
-	let body = result.match(/<body>([\s\S]*?)(?:<\/body>|$)/)?.[1]?.trim() ?? undefined;
-	if (body != null) {
-		result = result.replace(/<body>[\s\S]*?(?:<\/body>|$)/, '').trim();
-	}
-
-	// Check for self-closing body tag
-	if (body == null && result.includes('<body/>')) {
-		body = '';
-	}
-
-	// If both tags are present, return them
-	if (summary != null && body != null) return { summary: summary, body: body };
-
-	// If both tags are missing, split the result
-	if (summary == null && body == null) return splitMessageIntoSummaryAndBody(result);
-
-	// If only summary tag is present, use any remaining text as the body
-	if (summary && body == null) {
-		return result ? { summary: summary, body: result } : splitMessageIntoSummaryAndBody(summary);
-	}
-
-	// If only body tag is present, use the remaining text as the summary
-	if (summary == null && body) {
-		return result ? { summary: result, body: body } : splitMessageIntoSummaryAndBody(body);
-	}
-
-	return { summary: summary ?? '', body: body ?? '' };
-}
-
-function splitMessageIntoSummaryAndBody(message: string): NonNullable<AISummarizeResult['parsed']> {
-	message = message.replace(/```([\s\S]*?)```/, '$1').trim();
-	const index = message.indexOf('\n');
-	if (index === -1) return { summary: message, body: '' };
-
-	return {
-		summary: message.substring(0, index).trim(),
-		body: message.substring(index + 1).trim(),
-	};
-}
-
 function isPrimaryAIProvider(provider: AIProviders): provider is AIPrimaryProviders {
 	return supportedAIProviders.get(provider)?.primary === true;
 }
 
 function isPrimaryAIProviderModel(model: AIModel): model is AIModel<AIPrimaryProviders, AIProviderAndModel> {
 	return isPrimaryAIProvider(model.provider.id);
-}
-
-export async function prepareCompareDataForAIRequest(
-	svc: GitRepositoryService,
-	headRef: string,
-	baseRef: string,
-	options?: {
-		cancellation?: CancellationToken;
-		reportNoDiffService?: () => void;
-		reportNoCommitsService?: () => void;
-		reportNoChanges?: () => void;
-	},
-): Promise<{ diff: string; logMessages: string } | undefined> {
-	const { cancellation, reportNoDiffService, reportNoCommitsService, reportNoChanges } = options ?? {};
-	const getDiff = svc.diff?.getDiff;
-	if (getDiff == null) {
-		if (reportNoDiffService) {
-			reportNoDiffService();
-			return;
-		}
-	}
-
-	const getLog = svc.commits?.getLog;
-	if (getLog === undefined) {
-		if (reportNoCommitsService) {
-			reportNoCommitsService();
-			return;
-		}
-	}
-
-	const [diffResult, logResult] = await Promise.allSettled([
-		getDiff?.(headRef, baseRef, { notation: '...' }),
-		getLog(`${baseRef}..${headRef}`),
-	]);
-	const diff = getSettledValue(diffResult);
-	const log = getSettledValue(logResult);
-
-	if (!diff?.contents || !log?.commits?.size) {
-		reportNoChanges?.();
-		return undefined;
-	}
-
-	if (cancellation?.isCancellationRequested) throw new CancellationError();
-
-	const commitMessages: string[] = [];
-	for (const commit of [...log.commits.values()].sort((a, b) => a.date.getTime() - b.date.getTime())) {
-		const message = commit.message ?? commit.summary;
-		if (message) {
-			commitMessages.push(
-				`<commit-message ${commit.date.toISOString()}>\n${
-					commit.message ?? commit.summary
-				}\n<end-of-commit-message>`,
-			);
-		}
-	}
-
-	return { diff: diff.contents, logMessages: commitMessages.join('\n\n') };
 }

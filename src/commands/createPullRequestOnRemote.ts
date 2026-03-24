@@ -1,15 +1,16 @@
 import { window } from 'vscode';
-import type { Source } from '../constants.telemetry';
-import type { Container } from '../container';
-import type { GitRemote } from '../git/models/remote';
-import type { CreatePullRequestRemoteResource } from '../git/models/remoteResource';
-import { RemoteResourceType } from '../git/models/remoteResource';
-import type { RemoteProvider } from '../git/remotes/remoteProvider';
-import { getRemoteNameFromBranchName } from '../git/utils/branch.utils';
-import { getRepositoryOrShowPicker } from '../quickpicks/repositoryPicker';
-import { command, executeCommand } from '../system/-webview/command';
-import { GlCommandBase } from './commandBase';
-import type { OpenOnRemoteCommandArgs } from './openOnRemote';
+import type { Source } from '../constants.telemetry.js';
+import type { Container } from '../container.js';
+import type { GitRemote } from '../git/models/remote.js';
+import type { CreatePullRequestRemoteResource } from '../git/models/remoteResource.js';
+import { RemoteResourceType } from '../git/models/remoteResource.js';
+import type { RemoteProvider } from '../git/remotes/remoteProvider.js';
+import { getBranchMergeTargetName } from '../git/utils/-webview/branch.utils.js';
+import { getBranchNameWithoutRemote, getRemoteNameFromBranchName } from '../git/utils/branch.utils.js';
+import { getRepositoryOrShowPicker } from '../quickpicks/repositoryPicker.js';
+import { command, executeCommand } from '../system/-webview/command.js';
+import { GlCommandBase } from './commandBase.js';
+import type { OpenOnRemoteCommandArgs } from './openOnRemote.js';
 
 export interface CreatePullRequestOnRemoteCommandArgs {
 	base: string | undefined;
@@ -33,7 +34,7 @@ export class CreatePullRequestOnRemoteCommand extends GlCommandBase {
 		if (args?.repoPath != null) {
 			repo = this.container.git.getRepository(args.repoPath);
 		}
-		repo ??= await getRepositoryOrShowPicker('Create Pull Request', undefined, undefined);
+		repo ??= await getRepositoryOrShowPicker(this.container, 'Create Pull Request', undefined, undefined);
 		if (repo == null) return;
 
 		if (args == null) {
@@ -66,6 +67,17 @@ export class CreatePullRequestOnRemoteCommand extends GlCommandBase {
 			filter: r => r.provider?.id === providerId,
 			sort: true,
 		})) as GitRemote<RemoteProvider>[];
+
+		if (args.base == null) {
+			const branch = await repo.git.branches.getBranch(args.compare);
+			if (branch != null) {
+				const mergeTargetResult = await getBranchMergeTargetName(this.container, branch);
+				if (!mergeTargetResult.paused && mergeTargetResult.value != null) {
+					// Strip the remote name from the branch name
+					args.base = getBranchNameWithoutRemote(mergeTargetResult.value);
+				}
+			}
+		}
 
 		const resource: CreatePullRequestRemoteResource = {
 			type: RemoteResourceType.CreatePullRequest,

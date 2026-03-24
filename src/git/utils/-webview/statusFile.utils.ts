@@ -1,10 +1,10 @@
-import type { Container } from '../../../container';
-import type { GitCommit } from '../../models/commit';
-import { GitFileChange } from '../../models/fileChange';
-import { uncommitted, uncommittedStaged } from '../../models/revision';
-import type { GitStatusFile } from '../../models/statusFile';
-import type { GitUser } from '../../models/user';
-import { createUncommittedChangesCommit } from './commit.utils';
+import type { Container } from '../../../container.js';
+import type { GitCommit } from '../../models/commit.js';
+import { GitFileChange } from '../../models/fileChange.js';
+import { uncommitted, uncommittedStaged } from '../../models/revision.js';
+import type { GitStatusFile } from '../../models/statusFile.js';
+import type { GitUser } from '../../models/user.js';
+import { createUncommittedChangesCommit } from './commit.utils.js';
 
 export function getPseudoCommits(
 	container: Container,
@@ -22,6 +22,8 @@ export function getPseudoCommits(
 	let wip: GitFileChange[] | undefined;
 
 	for (const file of files) {
+		const mode = file.submodule != null ? '160000' : undefined;
+
 		if (file.conflicted) {
 			conflicted ??= [];
 			conflicted.push(
@@ -34,6 +36,9 @@ export function getPseudoCommits(
 					'HEAD',
 					undefined,
 					false,
+					undefined,
+					mode,
+					file.submodule,
 				),
 			);
 		} else {
@@ -49,6 +54,9 @@ export function getPseudoCommits(
 						file.staged ? uncommittedStaged : 'HEAD',
 						undefined,
 						false,
+						undefined,
+						mode,
+						file.submodule,
 					),
 				);
 			}
@@ -65,6 +73,9 @@ export function getPseudoCommits(
 						'HEAD',
 						undefined,
 						true,
+						undefined,
+						mode,
+						file.submodule,
 					),
 				);
 			}

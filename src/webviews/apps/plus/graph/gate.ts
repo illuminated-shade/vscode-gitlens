@@ -1,17 +1,16 @@
 import { consume } from '@lit/context';
-import { css, html } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { SignalWatcher } from '@lit-labs/signals';
+import { css, html, LitElement } from 'lit';
+import { customElement } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
-import { createWebviewCommandLink } from '../../../../system/webview';
-import type { State } from '../../../plus/graph/protocol';
-import { GlElement } from '../../shared/components/element';
-import { linkStyles } from '../shared/components/vscode.css';
-import { stateContext } from './context';
-import '../../shared/components/feature-badge';
-import '../../shared/components/feature-gate';
+import { createCommandLink } from '../../../../system/commands.js';
+import { linkStyles } from '../shared/components/vscode.css.js';
+import { graphStateContext } from './context.js';
+import '../../shared/components/feature-badge.js';
+import '../../shared/components/feature-gate.js';
 
 @customElement('gl-graph-gate')
-export class GlGraphGate extends GlElement {
+export class GlGraphGate extends SignalWatcher(LitElement) {
 	static override styles = [
 		linkStyles,
 		css`
@@ -23,29 +22,26 @@ export class GlGraphGate extends GlElement {
 		`,
 	];
 
-	@consume({ context: stateContext, subscribe: true })
-	@state()
-	state!: State;
+	@consume({ context: graphStateContext, subscribe: true })
+	graphState!: typeof graphStateContext.__context__;
 
 	override render() {
 		return html`<gl-feature-gate
-			.featurePreview=${this.state.featurePreview}
+			.featurePreview=${this.graphState.featurePreview}
 			featurePreviewCommandLink=${ifDefined(
-				this.state.featurePreview
-					? createWebviewCommandLink(
-							'gitlens.plus.continueFeaturePreview',
-							this.state.webviewId,
-							this.state.webviewInstanceId,
-							{ feature: this.state.featurePreview.feature },
-						)
+				this.graphState.featurePreview
+					? createCommandLink('gitlens.plus.continueFeaturePreview', {
+							feature: this.graphState.featurePreview.feature,
+						})
 					: undefined,
 			)}
 			appearance="alert"
+			featureRestriction="private-repos"
 			featureWithArticleIfNeeded="the Commit Graph"
-			?hidden=${this.state.allowed !== false}
+			?hidden=${this.graphState.allowed !== false}
 			.source=${{ source: 'graph', detail: 'gate' } as const}
-			.state=${this.state.subscription?.state}
-			.webroot=${this.state.webroot}
+			.state=${this.graphState.subscription?.state}
+			.webroot=${this.graphState.webroot}
 		>
 			<p slot="feature">
 				<a href="https://help.gitkraken.com/gitlens/gitlens-features/#commit-graph-pro">Commit Graph</a>

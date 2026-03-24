@@ -1,26 +1,28 @@
-import type { IntegrationDescriptor } from '../../constants.integrations';
-import type { Source } from '../../constants.telemetry';
-import type { GitBranchMergedStatus } from '../../git/gitProvider';
-import type { GitBranchStatus, GitTrackingState, GitTrackingUpstream } from '../../git/models/branch';
-import type { GitDiffFileStats } from '../../git/models/diff';
-import type { Issue } from '../../git/models/issue';
-import type { MergeConflict } from '../../git/models/mergeConflict';
-import type { GitPausedOperationStatus } from '../../git/models/pausedOperationStatus';
-import type { GitBranchReference } from '../../git/models/reference';
-import type { RepositoryShape } from '../../git/models/repositoryShape';
-import type { RemoteProviderSupportedFeatures } from '../../git/remotes/remoteProvider';
-import type { AIModel } from '../../plus/ai/models/model';
-import type { Subscription } from '../../plus/gk/models/subscription';
-import type { LaunchpadSummaryResult } from '../../plus/launchpad/launchpadIndicator';
-import type { LaunchpadItem } from '../../plus/launchpad/launchpadProvider';
-import type { LaunchpadGroup } from '../../plus/launchpad/models/launchpad';
-import type { OpenWorkspaceLocation } from '../../system/-webview/vscode/workspaces';
-import type { IpcScope, WebviewState } from '../protocol';
-import { IpcCommand, IpcNotification, IpcRequest } from '../protocol';
+import type { IntegrationDescriptor } from '../../constants.integrations.js';
+import type { Source } from '../../constants.telemetry.js';
+import type { WalkthroughContextKeys } from '../../constants.walkthroughs.js';
+import type { GitBranchMergedStatus } from '../../git/gitProvider.js';
+import type { GitBranchStatus, GitTrackingState, GitTrackingUpstream } from '../../git/models/branch.js';
+import type { GitDiffFileStats } from '../../git/models/diff.js';
+import type { Issue } from '../../git/models/issue.js';
+import type { ConflictDetectionResult } from '../../git/models/mergeConflicts.js';
+import type { GitPausedOperationStatus } from '../../git/models/pausedOperationStatus.js';
+import type { GitBranchReference } from '../../git/models/reference.js';
+import type { RepositoryShape } from '../../git/models/repositoryShape.js';
+import type { RemoteProviderSupportedFeatures } from '../../git/remotes/remoteProvider.js';
+import type { AIModel } from '../../plus/ai/models/model.js';
+import type { Subscription } from '../../plus/gk/models/subscription.js';
+import type { LaunchpadSummaryResult } from '../../plus/launchpad/launchpadIndicator.js';
+import type { LaunchpadItem } from '../../plus/launchpad/launchpadProvider.js';
+import type { LaunchpadGroup } from '../../plus/launchpad/models/launchpad.js';
+import type { OpenWorkspaceLocation } from '../../system/-webview/vscode/workspaces.js';
+import type { IpcScope } from '../ipc/models/ipc.js';
+import { IpcCommand, IpcNotification, IpcRequest } from '../ipc/models/ipc.js';
+import type { WebviewState } from '../protocol.js';
 
 export const scope: IpcScope = 'home';
 
-export interface State extends WebviewState {
+export interface State extends WebviewState<'gitlens.views.home'> {
 	discovering: boolean;
 	repositories: DidChangeRepositoriesParams;
 	webroot?: string;
@@ -30,9 +32,11 @@ export interface State extends WebviewState {
 		ai: boolean;
 	};
 	aiEnabled: boolean;
-	previewCollapsed: boolean;
+	experimentalComposerEnabled: boolean;
 	integrationBannerCollapsed: boolean;
 	aiAllAccessBannerCollapsed: boolean;
+	mcpBannerCollapsed: boolean;
+	mcpCanAutoRegister: boolean;
 	hasAnyIntegrationConnected: boolean;
 	integrations: IntegrationState[];
 	ai: { model: AIModel | undefined };
@@ -43,10 +47,19 @@ export interface State extends WebviewState {
 		doneCount: number;
 		allCount: number;
 		progress: number;
+		state: Record<WalkthroughContextKeys, boolean>;
 	};
+	dateFormat: string | null;
 	previewEnabled: boolean;
 	newInstall: boolean;
 	amaBannerCollapsed: boolean;
+	hostAppName: string;
+}
+
+export interface SubscriptionState {
+	subscription: Subscription;
+	avatar: string;
+	organizationsCount: number;
 }
 
 export interface IntegrationState extends IntegrationDescriptor {
@@ -81,7 +94,11 @@ export interface GetOverviewBranch {
 	id: string;
 	name: string;
 	opened: boolean;
-	timestamp?: number;
+	timestamps?: {
+		lastCommit?: number;
+		lastAccessed?: number;
+		lastModified?: number;
+	};
 	status: GitBranchStatus;
 	upstream: GitTrackingUpstream | undefined;
 
@@ -116,7 +133,7 @@ export interface GetOverviewBranch {
 				name: string;
 				status?: GitTrackingState;
 				mergedStatus?: GitBranchMergedStatus;
-				potentialConflicts?: MergeConflict;
+				potentialConflicts?: ConflictDetectionResult;
 
 				targetBranch: string | undefined;
 				baseBranch: string | undefined;
@@ -249,6 +266,11 @@ export const CollapseSectionCommand = new IpcCommand<CollapseSectionParams>(scop
 export const DismissWalkthroughSection = new IpcCommand<void>(scope, 'walkthrough/dismiss');
 
 export const DidChangeAiAllAccessBanner = new IpcNotification<boolean>(scope, 'ai/allAccess/didChange');
+export interface DidChangeMcpBannerParams {
+	mcpBannerCollapsed: boolean;
+	mcpCanAutoRegister: boolean;
+}
+export const DidChangeMcpBanner = new IpcNotification<DidChangeMcpBannerParams>(scope, 'mcp/didChange');
 export const DismissAiAllAccessBannerCommand = new IpcCommand<void>(scope, 'ai/allAccess/dismiss');
 
 export const SetOverviewFilter = new IpcCommand<OverviewFilters>(scope, 'overview/filter/set');
@@ -278,8 +300,9 @@ export const DidCompleteDiscoveringRepositories = new IpcNotification<DidComplet
 
 export interface DidChangePreviewEnabledParams {
 	previewEnabled: boolean;
-	previewCollapsed: boolean;
 	aiEnabled: boolean;
+	experimentalComposerEnabled: boolean;
+	dateFormat: string | null;
 }
 export const DidChangePreviewEnabled = new IpcNotification<DidChangePreviewEnabledParams>(
 	scope,
@@ -300,6 +323,7 @@ export interface DidChangeProgressParams {
 	progress: number;
 	doneCount: number;
 	allCount: number;
+	state: Record<WalkthroughContextKeys, boolean>;
 }
 export const DidChangeWalkthroughProgress = new IpcNotification<DidChangeProgressParams>(
 	scope,

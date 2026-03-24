@@ -1,14 +1,18 @@
 import type { MessageItem } from 'vscode';
-import { ConfigurationTarget, window } from 'vscode';
-import type { SuppressedMessages } from './config';
-import { urls } from './constants';
-import type { BlameIgnoreRevsFileError } from './git/errors';
-import { BlameIgnoreRevsFileBadRevisionError } from './git/errors';
-import type { GitCommit } from './git/models/commit';
-import { executeCommand, executeCoreCommand } from './system/-webview/command';
-import { configuration } from './system/-webview/configuration';
-import { openUrl } from './system/-webview/vscode/uris';
-import { Logger } from './system/logger';
+import { ConfigurationTarget, ThemeIcon, window } from 'vscode';
+import type { SuppressedMessages } from './config.js';
+import { urls } from './constants.js';
+import type { Source } from './constants.telemetry.js';
+import type { Container } from './container.js';
+import type { BlameIgnoreRevsFileError, GitCommandContext } from './git/errors.js';
+import { BlameIgnoreRevsFileBadRevisionError, GitCommandError } from './git/errors.js';
+import type { GitCommit } from './git/models/commit.js';
+import { mcpRegistrationAllowed } from './plus/gk/utils/-webview/mcp.utils.js';
+import { executeCommand, executeCoreCommand } from './system/-webview/command.js';
+import { configuration } from './system/-webview/configuration.js';
+import { openUrl } from './system/-webview/vscode/uris.js';
+import { filterMap } from './system/array.js';
+import { Logger } from './system/logger.js';
 
 export function showBlameInvalidIgnoreRevsFileWarningMessage(
 	ex: BlameIgnoreRevsFileError | BlameIgnoreRevsFileBadRevisionError,
@@ -94,6 +98,68 @@ export async function showGenericErrorMessage(message: string): Promise<void> {
 	}
 }
 
+function escapeShellArg(arg: string): string {
+	// If the argument contains spaces, quotes, or special characters, wrap it in single quotes
+	// and escape any single quotes within it
+	if (/[\s"'`$\\|&;<>(){}[\]!*?#~]/.test(arg)) {
+		// Escape single quotes by replacing ' with '\''
+		return `'${arg.replace(/'/g, "'\\''")}'`;
+	}
+	return arg;
+}
+
+function showGitCommandInTerminal(gitCommand: GitCommandContext, error: GitCommandError<any>): void {
+	const terminal = window.createTerminal({
+		cwd: gitCommand.repoPath,
+		name: 'GitLens',
+		hideFromUser: false,
+		iconPath: new ThemeIcon('gitlens-gitlens'),
+		isTransient: true,
+		message: `\x1b[1mGitLens attempted to run this Git command and it failed:\x1b[0m\r\n\x1b[31m${error.message}\x1b[0m\r\n\x1b[3mYou can run it again or modify it to diagnose the issue.\x1b[0m\r\n`,
+	});
+	const command = `git ${filterMap(gitCommand.args, a => (a != null ? escapeShellArg(a) : undefined)).join(' ')}`;
+	terminal.sendText(command, false);
+	terminal.show();
+}
+
+export async function showGitErrorMessage(error: Error | GitCommandError<any>, message?: string): Promise<void> {
+	if (!GitCommandError.is(error)) {
+		return void showGenericErrorMessage(message ?? error.message);
+	}
+
+	const { gitCommand } = error.details;
+	message = message ?? error.message;
+	const loggingEnabled = Logger.enabled('error');
+
+	const openOutputChannelOrEnableLogging: MessageItem = {
+		title: loggingEnabled ? 'Open Output Channel' : 'Enable Debug Logging',
+	};
+	const openInTerminalAction: MessageItem = { title: 'Open in Terminal' };
+
+	const result = await showMessage(
+		'error',
+		`${message.endsWith('.') ? message : `${message}.`} ${loggingEnabled ? 'See output channel for more details.' : 'If the error persists, please enable debug logging and try again.'}`,
+		undefined,
+		null,
+		...(gitCommand != null
+			? [openInTerminalAction, openOutputChannelOrEnableLogging]
+			: [openOutputChannelOrEnableLogging]),
+	);
+
+	if (result === openInTerminalAction) {
+		showGitCommandInTerminal(gitCommand, error);
+		return;
+	}
+
+	if (result === openOutputChannelOrEnableLogging) {
+		if (loggingEnabled) {
+			Logger.showOutputChannel();
+		} else {
+			void executeCommand('gitlens.enableDebugLogging');
+		}
+	}
+}
+
 export async function showBitbucketPRCommitLinksAppNotInstalledWarningMessage(revLink: string): Promise<void> {
 	const allowAccess = { title: 'Allow Access' };
 	const result = await showMessage(
@@ -161,13 +227,16 @@ export async function showPreReleaseExpiredErrorMessage(version: string): Promis
 		undefined,
 		null,
 		upgrade,
+		switchToRelease,
 	);
 
 	if (result === upgrade) {
 		void executeCoreCommand('workbench.extensions.installExtension', 'eamodio.gitlens', {
 			installPreReleaseVersion: true,
 		});
+		void executeCoreCommand('workbench.extensions.action.extensionUpdates');
 	} else if (result === switchToRelease) {
+		void executeCoreCommand('workbench.extensions.action.installExtensions');
 		void executeCoreCommand('workbench.extensions.action.switchToRelease', 'eamodio.gitlens');
 	}
 }
@@ -178,14 +247,6 @@ export function showLineUncommittedWarningMessage(message: string): Promise<Mess
 
 export function showNoRepositoryWarningMessage(message: string): Promise<MessageItem | undefined> {
 	return showMessage('warn', `${message}. No repository could be found.`, 'suppressNoRepositoryWarning');
-}
-
-export function showRebaseSwitchToTextWarningMessage(): Promise<MessageItem | undefined> {
-	return showMessage(
-		'warn',
-		'Closing either the git-rebase-todo file or the Rebase Editor will start the rebase.',
-		'suppressRebaseSwitchToTextWarning',
-	);
 }
 
 export function showGkDisconnectedTooManyFailedRequestsWarningMessage(): Promise<MessageItem | undefined> {
@@ -249,9 +310,9 @@ export async function showWhatsNewMessage(majorVersion: string): Promise<void> {
 	const releaseNotes = { title: 'View Release Notes' };
 	const result = await showMessage(
 		'info',
-		`Upgraded to GitLens ${majorVersion}${
+		`GitLens upgraded to ${majorVersion}${
 			majorVersion === '17'
-				? ' with all new [GitKraken AI](https://gitkraken.com/solutions/gitkraken-ai?source=gitlens&product=gitlens&utm_source=gitlens-extension&utm_medium=in-app-links) access included in GitLens Pro, AI changelog and pull request creation, and Bitbucket integration.'
+				? ' with the all new [GitKraken AI](https://gitkraken.com/solutions/gitkraken-ai?source=gitlens&product=gitlens&utm_source=gitlens-extension&utm_medium=in-app-links) access included in GitLens Pro, AI changelog and pull request creation, and Bitbucket integration.'
 				: " — see what's new."
 		}`,
 		undefined,
@@ -265,6 +326,61 @@ export async function showWhatsNewMessage(majorVersion: string): Promise<void> {
 	}
 }
 
+export async function showMcpMessage(container: Container, _current: string): Promise<void> {
+	const isAutoInstallable = mcpRegistrationAllowed(container);
+	const confirm = { title: 'OK', isCloseAffordance: true };
+	const learnMore = { title: 'Learn More' };
+	const install = { title: 'Install GitKraken MCP' };
+
+	let result: MessageItem | undefined;
+	if (isAutoInstallable) {
+		result = await showMessage(
+			'info',
+			`GitLens adds the GitKraken MCP into your AI chat, leveraging Git and your integrations to provide context and perform actions.`,
+			undefined,
+			null,
+			learnMore,
+			confirm,
+		);
+	} else {
+		result = await showMessage(
+			'info',
+			`Allow GitLens to add the GitKraken MCP into your AI chat, leveraging Git and your integrations (issues, PRs, etc) to provide context and perform actions. Saving you time and context switching.`,
+			undefined,
+			null,
+			install,
+			learnMore,
+			confirm,
+		);
+	}
+
+	if (result === install) {
+		void executeCommand<Source>('gitlens.ai.mcp.install', { source: 'mcp-welcome-message' });
+	}
+
+	if (result === learnMore) {
+		void openUrl(urls.helpCenterMCP);
+	}
+}
+
+export async function showCursorMcpCleanupMessage(): Promise<void> {
+	const learnMore = { title: 'Learn More' };
+	const confirm = { title: 'OK', isCloseAffordance: true };
+
+	const result = await showMessage(
+		'info',
+		`GitLens now registers the GitKraken MCP automatically in Cursor. You may have a duplicate entry in your Cursor \`mcp.json\` — remove \`mcpServers.GitKraken\` to clean it up.`,
+		undefined,
+		null,
+		learnMore,
+		confirm,
+	);
+
+	if (result === learnMore) {
+		void openUrl(urls.helpCenterMCP);
+	}
+}
+
 export async function showMessage(
 	type: 'info' | 'warn' | 'error',
 	message: string,
@@ -272,10 +388,10 @@ export async function showMessage(
 	dontShowAgain: MessageItem | null = { title: "Don't Show Again" },
 	...actions: MessageItem[]
 ): Promise<MessageItem | undefined> {
-	Logger.log(`ShowMessage(${type}, '${message}', ${suppressionKey}, ${JSON.stringify(dontShowAgain)})`);
+	Logger.debug(`ShowMessage(${type}, '${message}', ${suppressionKey}, ${JSON.stringify(dontShowAgain)})`);
 
 	if (suppressionKey != null && configuration.get(`advanced.messages.${suppressionKey}` as const)) {
-		Logger.log(`ShowMessage(${type}, '${message}', ${suppressionKey}, ${JSON.stringify(dontShowAgain)}) skipped`);
+		Logger.debug(`ShowMessage(${type}, '${message}', ${suppressionKey}, ${JSON.stringify(dontShowAgain)}) skipped`);
 		return undefined;
 	}
 
@@ -299,7 +415,7 @@ export async function showMessage(
 	}
 
 	if (suppressionKey != null && (dontShowAgain === null || result === dontShowAgain)) {
-		Logger.log(
+		Logger.debug(
 			`ShowMessage(${type}, '${message}', ${suppressionKey}, ${JSON.stringify(
 				dontShowAgain,
 			)}) don't show again requested`,
@@ -309,7 +425,7 @@ export async function showMessage(
 		if (result === dontShowAgain) return undefined;
 	}
 
-	Logger.log(
+	Logger.debug(
 		`ShowMessage(${type}, '${message}', ${suppressionKey}, ${JSON.stringify(dontShowAgain)}) returned ${
 			result != null ? result.title : result
 		}`,

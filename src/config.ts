@@ -1,7 +1,6 @@
-import type { AIProviderAndModel, SupportedAIModels } from './constants.ai';
-import type { GroupableTreeViewTypes } from './constants.views';
-import type { DateTimeFormat } from './system/date';
-import type { LogLevel } from './system/logger.constants';
+import type { AIProviderAndModel, SupportedAIModels } from './constants.ai.js';
+import type { GroupableTreeViewTypes } from './constants.views.js';
+import type { DateTimeFormat } from './system/date.js';
 
 export interface Config {
 	readonly advanced: AdvancedConfig;
@@ -37,17 +36,18 @@ export interface Config {
 	readonly menus: boolean | MenuConfig;
 	readonly mode: ModeConfig;
 	readonly modes: ModesConfig | null;
-	readonly outputLevel: OutputLevel;
 	readonly partners: PartnersConfig | null;
 	readonly plusFeatures: PlusFeaturesConfig;
 	readonly proxy: ProxyConfig | null;
 	readonly rebaseEditor: RebaseEditorConfig;
 	readonly remotes: RemotesConfig[] | null;
 	readonly showWhatsNewAfterUpgrades: boolean;
+	readonly signing: SigningConfig;
 	readonly sortBranchesBy: BranchSorting;
 	readonly sortContributorsBy: ContributorSorting;
 	readonly sortTagsBy: TagSorting;
 	readonly sortRepositoriesBy: RepositoriesSorting;
+	readonly sortWorktreesBy: WorktreeSorting;
 	readonly statusBar: StatusBarConfig;
 	readonly strings: StringsConfig;
 	readonly telemetry: TelemetryConfig;
@@ -92,6 +92,7 @@ export type ContributorSorting =
 	| 'score:desc'
 	| 'score:asc';
 export type RepositoriesSorting = 'discovered' | 'lastFetched:desc' | 'lastFetched:asc' | 'name:asc' | 'name:desc';
+export type WorktreeSorting = 'date:desc' | 'date:asc' | 'name:asc' | 'name:desc';
 export type CustomRemoteType =
 	| 'AzureDevOps'
 	| 'Bitbucket'
@@ -107,7 +108,8 @@ export type DateSource = 'authored' | 'committed';
 export type DateStyle = 'absolute' | 'relative';
 export type FileAnnotationType = 'blame' | 'changes' | 'heatmap';
 export type GitCommandSorting = 'name' | 'usage';
-export type GraphBranchesVisibility = 'all' | 'smart' | 'current';
+export type GraphBranchesVisibility = 'all' | 'smart' | 'current' | 'favorited';
+export type GraphMultiSelectionMode = boolean | 'topological';
 export type GraphScrollMarkersAdditionalTypes =
 	| 'localBranches'
 	| 'remoteBranches'
@@ -123,12 +125,6 @@ export type GraphMinimapMarkersAdditionalTypes =
 export type GravatarDefaultStyle = 'wavatar' | 'identicon' | 'monsterid' | 'mp' | 'retro' | 'robohash';
 export type HeatmapLocations = 'gutter' | 'line' | 'overview';
 export type KeyMap = 'alternate' | 'chorded' | 'none';
-
-type DeprecatedOutputLevel =
-	| /** @deprecated use `off` */ 'silent'
-	| /** @deprecated use `error` */ 'errors'
-	| /** @deprecated use `info` */ 'verbose';
-export type OutputLevel = LogLevel | DeprecatedOutputLevel;
 
 export type StatusBarCommands =
 	| 'gitlens.copyRemoteCommitUrl'
@@ -162,7 +158,6 @@ export type SuppressedMessages =
 	| 'suppressGitVersionWarning'
 	| 'suppressLineUncommittedWarning'
 	| 'suppressNoRepositoryWarning'
-	| 'suppressRebaseSwitchToTextWarning'
 	| 'suppressGkDisconnectedTooManyFailedRequestsWarningMessage'
 	| 'suppressGkRequestFailed500Warning'
 	| 'suppressGkRequestTimedOutWarning'
@@ -199,18 +194,33 @@ export interface AdvancedConfig {
 	readonly fileHistoryFollowsRenames: boolean;
 	readonly fileHistoryShowAllBranches: boolean;
 	readonly fileHistoryShowMergeCommits: boolean;
+	readonly git: {
+		readonly timeout: number;
+		readonly maxConcurrentProcesses: number;
+	};
 	readonly maxListItems: number;
 	readonly maxSearchItems: number;
 	readonly messages: { [key in SuppressedMessages]: boolean };
 	readonly quickPick: {
 		readonly closeOnFocusOut: boolean;
 	};
+	readonly resolveSymlinks: boolean;
 	readonly repositorySearchDepth: number | null;
 	readonly similarityThreshold: number | null;
+	readonly skipOnboarding: boolean;
 }
 
 interface AIConfig {
 	readonly enabled: boolean;
+	readonly exclude: {
+		/** Glob patterns for files to exclude from AI prompts (like files.exclude). May be undefined on extension upgrade due to VS Code bug. */
+		readonly files: Record<string, boolean> | undefined;
+	};
+	readonly experimental: {
+		readonly composer: {
+			readonly enabled: boolean;
+		};
+	};
 	readonly azure: {
 		readonly url: string | null;
 	};
@@ -227,6 +237,9 @@ interface AIConfig {
 	readonly generateCommitMessage: {
 		readonly customInstructions: string;
 		readonly enabled: boolean;
+	};
+	readonly generateCommits: {
+		readonly customInstructions: string;
 	};
 	readonly generateStashMessage: {
 		readonly customInstructions: string;
@@ -380,12 +393,20 @@ interface GitCommandsConfig {
 interface GitKrakenConfig {
 	readonly activeOrganizationId: string | null;
 	readonly cli: GitKrakenCliConfig;
+	readonly mcp: GitKrakenMcpConfig;
 }
 
 interface GitKrakenCliConfig {
 	readonly integration: {
 		readonly enabled: boolean;
 	};
+	readonly insiders: {
+		readonly enabled: boolean;
+	};
+}
+
+interface GitKrakenMcpConfig {
+	readonly autoEnabled: boolean;
 }
 
 export interface GraphConfig {
@@ -403,6 +424,7 @@ export interface GraphConfig {
 		};
 	};
 	readonly highlightRowsOnRefHover: boolean;
+	readonly initialRowSelection: 'head' | 'wip';
 	readonly issues: {
 		readonly enabled: boolean;
 	};
@@ -412,7 +434,7 @@ export interface GraphConfig {
 		readonly dataType: 'commits' | 'lines';
 		readonly additionalTypes: GraphMinimapMarkersAdditionalTypes[];
 	};
-	readonly multiselect: boolean;
+	readonly multiselect: GraphMultiSelectionMode;
 	readonly onlyFollowFirstParent: boolean;
 	readonly pageItemLimit: number;
 	readonly pullRequests: {
@@ -434,6 +456,7 @@ export interface GraphConfig {
 	readonly statusBar: {
 		readonly enabled: boolean;
 	};
+	readonly stickyTimeline: boolean;
 }
 
 interface HeatmapConfig {
@@ -557,6 +580,7 @@ export interface MenuConfig {
 		| false
 		| {
 				readonly graph: boolean;
+				readonly visualHistory: boolean;
 		  };
 	readonly scmRepositoryInline:
 		| false
@@ -564,14 +588,15 @@ export interface MenuConfig {
 				readonly generateCommitMessage: boolean;
 				readonly graph: boolean;
 				readonly stash: boolean;
+				readonly visualHistory: boolean;
 		  };
 	readonly scmRepository:
 		| false
 		| {
 				readonly authors: boolean;
 				readonly generateCommitMessage: boolean;
-				readonly patch: boolean;
 				readonly graph: boolean;
+				readonly visualHistory: boolean;
 		  };
 	readonly scmGroupInline:
 		| false
@@ -643,8 +668,11 @@ interface ProxyConfig {
 }
 
 interface RebaseEditorConfig {
+	readonly density: 'compact' | 'comfortable';
+	readonly openOnPausedRebase: boolean | 'interactive';
 	readonly ordering: 'asc' | 'desc';
-	readonly showDetailsView: 'open' | 'selection' | false;
+	readonly revealLocation: 'graph' | 'inspect';
+	readonly revealBehavior: 'onDoubleClick' | 'onSelection';
 }
 
 export type RemotesConfig =
@@ -679,6 +707,11 @@ export interface RemotesUrlsConfig {
 	readonly fileInCommit: string;
 	readonly fileLine: string;
 	readonly fileRange: string;
+}
+
+interface SigningConfig {
+	readonly showSignatureBadges: boolean;
+	readonly enableKeyGeneration: boolean;
 }
 
 interface StatusBarConfig {
@@ -1058,19 +1091,6 @@ interface WorktreesConfig {
 	readonly promptForLocation: boolean;
 }
 
-export function fromOutputLevel(level: OutputLevel): LogLevel {
-	switch (level) {
-		case /** @deprecated use `off` */ 'silent':
-			return 'off';
-		case /** @deprecated use `error` */ 'errors':
-			return 'error';
-		case /** @deprecated use `info` */ 'verbose':
-			return 'info';
-		default:
-			return level;
-	}
-}
-
 export type CoreConfig = {
 	readonly editor: {
 		readonly letterSpacing: number;
@@ -1082,6 +1102,7 @@ export type CoreConfig = {
 	readonly git: {
 		readonly autoRepositoryDetection: boolean | 'subFolders' | 'openEditors';
 		readonly enabled: boolean;
+		readonly enableCommitSigning: boolean;
 		readonly fetchOnPull: boolean;
 		readonly path: string | string[] | null;
 		readonly pullTags: boolean;
@@ -1100,6 +1121,9 @@ export type CoreConfig = {
 	};
 	readonly workbench: {
 		readonly editorAssociations: Record<string, string> | { viewType: string; filenamePattern: string }[];
+		readonly panel: {
+			readonly visible: boolean;
+		};
 		readonly tree: {
 			readonly renderIndentGuides: 'always' | 'none' | 'onHover';
 			readonly indent: number;

@@ -1,12 +1,12 @@
 import type { TextEditor, Uri } from 'vscode';
 import { window } from 'vscode';
-import { Schemes } from '../constants';
-import type { MarkdownContentMetadata } from '../documents/markdown';
-import { decodeGitLensRevisionUriAuthority } from '../git/gitUri.authority';
-import { command, executeCommand } from '../system/-webview/command';
-import { Logger } from '../system/logger';
-import { ActiveEditorCommand } from './commandBase';
-import { getCommandUri } from './commandBase.utils';
+import { Schemes } from '../constants.js';
+import type { MarkdownContentMetadata } from '../documents/markdown.js';
+import { decodeGitLensRevisionUriAuthority } from '../git/gitUri.authority.js';
+import { command, executeCommand } from '../system/-webview/command.js';
+import { Logger } from '../system/logger.js';
+import { ActiveEditorCommand } from './commandBase.js';
+import { getCommandUri } from './commandBase.utils.js';
 
 @command()
 export class RegenerateMarkdownDocumentCommand extends ActiveEditorCommand {
@@ -18,9 +18,9 @@ export class RegenerateMarkdownDocumentCommand extends ActiveEditorCommand {
 		uri = getCommandUri(uri, editor);
 		if (uri == null) return;
 
-		// Only work with gitlens-markdown scheme documents
-		if (uri.scheme !== Schemes.GitLensMarkdown) {
-			void window.showErrorMessage('This action can only be used on GitLens markdown documents.');
+		// Only work with gitlens-ai-markdown scheme documents
+		if (uri.scheme !== Schemes.GitLensAIMarkdown) {
+			void window.showErrorMessage('This action can only be used on GitLens AI markdown documents.');
 			return;
 		}
 

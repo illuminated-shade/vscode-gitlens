@@ -1,15 +1,15 @@
 import type { CancellationToken } from 'vscode';
-import type { Container } from '../../../../../container';
-import type { GitCache } from '../../../../../git/cache';
-import type { GitTagsSubProvider, PagedResult, PagingOptions } from '../../../../../git/gitProvider';
-import { GitTag } from '../../../../../git/models/tag';
-import type { TagSortOptions } from '../../../../../git/utils/-webview/sorting';
-import { sortTags } from '../../../../../git/utils/-webview/sorting';
-import { log } from '../../../../../system/decorators/log';
-import { Logger } from '../../../../../system/logger';
-import { getLogScope } from '../../../../../system/logger.scope';
-import type { GitHubGitProviderInternal } from '../githubGitProvider';
-import { stripOrigin } from '../githubGitProvider';
+import type { Container } from '../../../../../container.js';
+import type { GitCache } from '../../../../../git/cache.js';
+import type { GitTagsSubProvider, PagedResult, PagingOptions } from '../../../../../git/gitProvider.js';
+import { GitTag } from '../../../../../git/models/tag.js';
+import type { TagSortOptions } from '../../../../../git/utils/-webview/sorting.js';
+import { sortTags } from '../../../../../git/utils/-webview/sorting.js';
+import { stripOrigin } from '../../../../../git/utils/revision.utils.js';
+import { debug } from '../../../../../system/decorators/log.js';
+import { getScopedLogger } from '../../../../../system/logger.scope.js';
+import { toTokenWithInfo } from '../../../authentication/models.js';
+import type { GitHubGitProviderInternal } from '../githubGitProvider.js';
 
 const emptyPagedResult: PagedResult<any> = Object.freeze({ values: [] });
 
@@ -20,7 +20,7 @@ export class TagsGitSubProvider implements GitTagsSubProvider {
 		private readonly provider: GitHubGitProviderInternal,
 	) {}
 
-	@log()
+	@debug()
 	async getTag(repoPath: string, name: string, cancellation?: CancellationToken): Promise<GitTag | undefined> {
 		const {
 			values: [tag],
@@ -28,7 +28,7 @@ export class TagsGitSubProvider implements GitTagsSubProvider {
 		return tag;
 	}
 
-	@log({ args: { 1: false } })
+	@debug({ args: repoPath => ({ repoPath: repoPath }) })
 	async getTags(
 		repoPath: string | undefined,
 		options?: {
@@ -40,66 +40,68 @@ export class TagsGitSubProvider implements GitTagsSubProvider {
 	): Promise<PagedResult<GitTag>> {
 		if (repoPath == null) return emptyPagedResult;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
-		let tagsPromise = options?.paging?.cursor ? undefined : this.cache.tags?.get(repoPath);
-		if (tagsPromise == null) {
-			async function load(this: TagsGitSubProvider): Promise<PagedResult<GitTag>> {
-				try {
-					const { metadata, github, session } = await this.provider.ensureRepositoryContext(repoPath!);
+		const tagsPromise = options?.paging?.cursor
+			? undefined
+			: this.cache.tags.getOrCreate(repoPath, async cancellable => {
+					try {
+						const { metadata, github, session } = await this.provider.ensureRepositoryContext(repoPath);
 
-					const tags: GitTag[] = [];
+						const tags: GitTag[] = [];
 
-					let cursor = options?.paging?.cursor;
-					const loadAll = cursor == null;
+						let cursor = options?.paging?.cursor;
+						const loadAll = cursor == null;
 
-					let authoredDate;
-					let committedDate;
+						let authoredDate;
+						let committedDate;
 
-					while (true) {
-						const result = await github.getTags(
-							session.accessToken,
-							metadata.repo.owner,
-							metadata.repo.name,
-							{ cursor: cursor },
-						);
-
-						for (const tag of result.values) {
-							authoredDate =
-								tag.target.authoredDate ?? tag.target.target?.authoredDate ?? tag.target.tagger?.date;
-							committedDate =
-								tag.target.committedDate ?? tag.target.target?.committedDate ?? tag.target.tagger?.date;
-
-							tags.push(
-								new GitTag(
-									this.container,
-									repoPath!,
-									tag.name,
-									tag.target.target?.oid ?? tag.target.oid,
-									tag.target.message ?? tag.target.target?.message ?? '',
-									authoredDate != null ? new Date(authoredDate) : undefined,
-									committedDate != null ? new Date(committedDate) : undefined,
-								),
+						while (true) {
+							const result = await github.getTags(
+								toTokenWithInfo(this.provider.authenticationProviderId, session),
+								metadata.repo.owner,
+								metadata.repo.name,
+								{ cursor: cursor },
 							);
+
+							for (const tag of result.values) {
+								authoredDate =
+									tag.target.authoredDate ??
+									tag.target.target?.authoredDate ??
+									tag.target.tagger?.date;
+								committedDate =
+									tag.target.committedDate ??
+									tag.target.target?.committedDate ??
+									tag.target.tagger?.date;
+
+								tags.push(
+									new GitTag(
+										this.container,
+										repoPath,
+										tag.name,
+										tag.target.target?.oid ?? tag.target.oid,
+										tag.target.message ?? tag.target.target?.message ?? '',
+										authoredDate != null ? new Date(authoredDate) : undefined,
+										committedDate != null ? new Date(committedDate) : undefined,
+									),
+								);
+							}
+
+							if (!result.paging?.more || !loadAll) return { ...result, values: tags };
+
+							cursor = result.paging.cursor;
 						}
+					} catch (ex) {
+						cancellable.invalidate();
+						scope?.error(ex);
+						debugger;
 
-						if (!result.paging?.more || !loadAll) return { ...result, values: tags };
-
-						cursor = result.paging.cursor;
+						return emptyPagedResult;
 					}
-				} catch (ex) {
-					Logger.error(ex, scope);
-					debugger;
+				});
 
-					this.cache.tags?.delete(repoPath!);
-					return emptyPagedResult;
-				}
-			}
-
-			tagsPromise = load.call(this);
-			if (options?.paging?.cursor == null) {
-				this.cache.tags?.set(repoPath, tagsPromise);
-			}
+		if (tagsPromise == null) {
+			return emptyPagedResult;
 		}
 
 		let result = await tagsPromise;
@@ -117,7 +119,7 @@ export class TagsGitSubProvider implements GitTagsSubProvider {
 		return result;
 	}
 
-	@log()
+	@debug()
 	async getTagsWithCommit(
 		repoPath: string,
 		sha: string,
@@ -126,13 +128,13 @@ export class TagsGitSubProvider implements GitTagsSubProvider {
 	): Promise<string[]> {
 		if (repoPath == null || options?.commitDate == null) return [];
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const { metadata, github, session } = await this.provider.ensureRepositoryContext(repoPath);
 
 			const tags = await github.getTagsWithCommit(
-				session.accessToken,
+				toTokenWithInfo(this.provider.authenticationProviderId, session),
 				metadata.repo.owner,
 				metadata.repo.name,
 				stripOrigin(sha),
@@ -141,7 +143,7 @@ export class TagsGitSubProvider implements GitTagsSubProvider {
 
 			return tags;
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 			return [];
 		}

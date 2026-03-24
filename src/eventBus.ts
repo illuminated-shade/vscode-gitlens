@@ -1,11 +1,12 @@
 import type { Disposable, Uri } from 'vscode';
 import { EventEmitter } from 'vscode';
-import type { CustomEditorIds, ViewIds, WebviewIds } from './constants.views';
-import type { CachedGitTypes } from './git/gitProvider';
-import type { GitCommit } from './git/models/commit';
-import type { GitRevisionReference } from './git/models/reference';
-import type { RepositoryChange } from './git/models/repository';
-import type { Draft, LocalDraft } from './plus/drafts/models/drafts';
+import type { CustomEditorIds, ViewIds, WebviewIds } from './constants.views.js';
+import type { CachedGitTypes } from './git/gitProvider.js';
+import type { GitCommit } from './git/models/commit.js';
+import type { GitRevisionReference } from './git/models/reference.js';
+import type { RepositoryChange } from './git/models/repository.js';
+import type { GitCommitSearchContext } from './git/search.js';
+import type { Draft, LocalDraft } from './plus/drafts/models/drafts.js';
 
 export type CommitSelectedEvent = EventBusEvent<'commit:selected'>;
 interface CommitSelectedEventArgs {
@@ -13,6 +14,7 @@ interface CommitSelectedEventArgs {
 	readonly interaction: 'active' | 'passive';
 	readonly preserveFocus?: boolean;
 	readonly preserveVisibility?: boolean;
+	readonly searchContext?: GitCommitSearchContext;
 }
 
 export type DraftSelectedEvent = EventBusEvent<'draft:selected'>;
@@ -37,8 +39,8 @@ interface GitCacheResetEventArgs {
 }
 
 /**
- *  Out-of-band event to ensure @type {import('./git/models/repository').Repository} fires its change event
- *  Should only be listened to by @type {import('./git/models/repository').Repository}
+ *  Out-of-band event to ensure @type {import('./git/models/repository.js').Repository} fires its change event
+ *  Should only be listened to by @type {import('./git/models/repository.js').Repository}
  */
 export type GitRepoChangeEvent = EventBusEvent<'git:repo:change'>;
 interface GitRepoChangeEventArgs {
@@ -53,10 +55,18 @@ type EventsMapping = {
 
 	'git:cache:reset': GitCacheResetEventArgs;
 	/**
-	 *  Out-of-band event to ensure @type {import('./git/models/repository').Repository} fires its change event
-	 *  Should only be listened to by @type {import('./git/models/repository').Repository}
+	 *  Out-of-band event to ensure @type {import('./git/models/repository.js').Repository} fires its change event
+	 *  Should only be listened to by @type {import('./git/models/repository.js').Repository}
 	 */
 	'git:repo:change': GitRepoChangeEventArgs;
+	/**
+	 * Event fired when the CLI integration IPC server is started
+	 */
+	'gk:cli:ipc:started': undefined;
+	/**
+	 * Event fired when MCP setup via CLI has completed successfully with extension-based registration
+	 */
+	'gk:cli:mcp:setup:completed': undefined;
 };
 
 interface EventBusEvent<T extends keyof EventsMapping = keyof EventsMapping> {
@@ -83,6 +93,11 @@ const _cacheableEventNames = new Set<keyof CacheableEventsMapping>([
 	'file:selected',
 ]);
 const _cachedEventArgs = new Map<keyof CacheableEventsMapping, CacheableEventsMapping[keyof CacheableEventsMapping]>();
+// Cache events by source to avoid stale data from different contexts (e.g., graph vs commitDetails)
+const _cachedEventArgsBySource = new Map<
+	string,
+	Map<keyof CacheableEventsMapping, CacheableEventsMapping[keyof CacheableEventsMapping]>
+>();
 
 export class EventBus implements Disposable {
 	private readonly _emitter = new EventEmitter<EventBusEvent>();
@@ -94,12 +109,17 @@ export class EventBus implements Disposable {
 	fire<T extends keyof EventsMapping>(name: T, data: EventsMapping[T], options?: EventBusOptions): void {
 		if (canCacheEventArgs(name)) {
 			_cachedEventArgs.set(name, data as CacheableEventsMapping[typeof name]);
+			// Also cache by source to avoid stale data from different contexts
+			if (options?.source != null) {
+				let sourceCache = _cachedEventArgsBySource.get(options.source);
+				if (sourceCache == null) {
+					sourceCache = new Map();
+					_cachedEventArgsBySource.set(options.source, sourceCache);
+				}
+				sourceCache.set(name, data as CacheableEventsMapping[typeof name]);
+			}
 		}
-		this._emitter.fire({
-			name: name,
-			data: data,
-			source: options?.source,
-		});
+		this._emitter.fire({ name: name, data: data, source: options?.source });
 	}
 
 	fireAsync<T extends keyof EventsMapping>(name: T, data: EventsMapping[T], options?: EventBusOptions): void {
@@ -108,6 +128,13 @@ export class EventBus implements Disposable {
 
 	getCachedEventArgs<T extends keyof CacheableEventsMapping>(name: T): CacheableEventsMapping[T] | undefined {
 		return _cachedEventArgs.get(name) as CacheableEventsMapping[T] | undefined;
+	}
+
+	getCachedEventArgsBySource<T extends keyof CacheableEventsMapping>(
+		name: T,
+		source: EventBusSource,
+	): CacheableEventsMapping[T] | undefined {
+		return _cachedEventArgsBySource.get(source)?.get(name) as CacheableEventsMapping[T] | undefined;
 	}
 
 	on<T extends keyof EventsMapping>(name: T, handler: (e: EventBusEvent<T>) => void, thisArgs?: unknown): Disposable {

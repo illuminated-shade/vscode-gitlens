@@ -1,7 +1,7 @@
-import type { FilteredGitFeatures } from '../../features';
-import { maybeStopWatch } from '../../system/stopwatch';
-import { iterateByDelimiter } from '../../system/string';
-import type { Parser } from './logParser';
+import type { FilteredGitFeatures } from '../../features.js';
+import { maybeStopWatch } from '../../system/stopwatch.js';
+import { iterateByDelimiter } from '../../system/string.js';
+import type { Parser } from './logParser.js';
 
 const branchMapping = {
 	current: `%(HEAD)`, // HEAD indicator (current branch)
@@ -66,7 +66,7 @@ function createRefParser<T extends Record<string, string | undefined>>(
 	const args = [`--format=${format}`];
 
 	function* parse(data: string | Iterable<string> | undefined): Generator<T> {
-		using sw = maybeStopWatch('Git.RefParser.parse', { log: false, logLevel: 'debug' });
+		using sw = maybeStopWatch('Git.RefParser.parse', { log: { onlyExit: true, level: 'debug' } });
 
 		if (!data) {
 			sw?.stop({ suffix: ` no data` });

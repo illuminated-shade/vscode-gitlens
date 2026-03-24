@@ -1,32 +1,33 @@
-import type { CancellationToken, Command, Selection, Uri } from 'vscode';
-import { MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState } from 'vscode';
-import type { DiffWithCommandArgs } from '../../commands/diffWith';
-import type { DiffWithPreviousCommandArgs } from '../../commands/diffWithPrevious';
-import type { Colors } from '../../constants.colors';
-import type { Container } from '../../container';
-import { CommitFormatter } from '../../git/formatters/commitFormatter';
-import { StatusFileFormatter } from '../../git/formatters/statusFormatter';
-import type { DiffRange } from '../../git/gitProvider';
-import { GitUri } from '../../git/gitUri';
-import type { GitBranch } from '../../git/models/branch';
-import type { GitCommit } from '../../git/models/commit';
-import type { GitFile } from '../../git/models/file';
-import type { GitRevisionReference } from '../../git/models/reference';
-import { getGitFileStatusIcon } from '../../git/utils/fileStatus.utils';
-import { createCommand } from '../../system/-webview/command';
-import { configuration } from '../../system/-webview/configuration';
-import { editorLineToDiffRange, selectionToDiffRange } from '../../system/-webview/vscode/editors';
-import { joinPaths } from '../../system/path';
-import { getSettledValue, pauseOnCancelOrTimeoutMapTuplePromise } from '../../system/promise';
-import type { FileHistoryView } from '../fileHistoryView';
-import type { LineHistoryView } from '../lineHistoryView';
-import type { ViewsWithCommits } from '../viewBase';
-import { createViewDecorationUri } from '../viewDecorationProvider';
-import type { ViewNode } from './abstract/viewNode';
-import { ContextValues } from './abstract/viewNode';
-import { ViewRefFileNode } from './abstract/viewRefNode';
-import { MergeConflictCurrentChangesNode } from './mergeConflictCurrentChangesNode';
-import { MergeConflictIncomingChangesNode } from './mergeConflictIncomingChangesNode';
+import type { CancellationToken, Command, Selection } from 'vscode';
+import { MarkdownString, ThemeColor, ThemeIcon, TreeItem, TreeItemCollapsibleState, Uri } from 'vscode';
+import type { DiffWithCommandArgs } from '../../commands/diffWith.js';
+import type { DiffWithPreviousCommandArgs } from '../../commands/diffWithPrevious.js';
+import type { Colors } from '../../constants.colors.js';
+import type { Container } from '../../container.js';
+import { CommitFormatter } from '../../git/formatters/commitFormatter.js';
+import { StatusFileFormatter } from '../../git/formatters/statusFormatter.js';
+import type { DiffRange } from '../../git/gitProvider.js';
+import { GitUri } from '../../git/gitUri.js';
+import type { GitBranch } from '../../git/models/branch.js';
+import type { GitCommit } from '../../git/models/commit.js';
+import type { GitFile } from '../../git/models/file.js';
+import type { GitPausedOperationStatus } from '../../git/models/pausedOperationStatus.js';
+import type { GitRevisionReference } from '../../git/models/reference.js';
+import { getGitFileStatusIcon } from '../../git/utils/fileStatus.utils.js';
+import { getConflictIncomingRef, resolveConflictFilePaths } from '../../git/utils/pausedOperationStatus.utils.js';
+import { createCommand } from '../../system/-webview/command.js';
+import { configuration } from '../../system/-webview/configuration.js';
+import { editorLineToDiffRange, selectionToDiffRange } from '../../system/-webview/vscode/editors.js';
+import { joinPaths } from '../../system/path.js';
+import { getSettledValue, pauseOnCancelOrTimeoutMapTuplePromise } from '../../system/promise.js';
+import type { FileHistoryView } from '../fileHistoryView.js';
+import type { LineHistoryView } from '../lineHistoryView.js';
+import type { ViewsWithCommits } from '../viewBase.js';
+import { createViewDecorationUri } from '../viewDecorationProvider.js';
+import type { ViewNode } from './abstract/viewNode.js';
+import { ContextValues } from './abstract/viewNode.js';
+import { ViewRefFileNode } from './abstract/viewRefNode.js';
+import { MergeConflictChangesNode } from './mergeConflictChangesNode.js';
 
 export class FileRevisionAsCommitNode extends ViewRefFileNode<
 	'file-commit',
@@ -59,18 +60,87 @@ export class FileRevisionAsCommitNode extends ViewRefFileNode<
 		return this.commit;
 	}
 
+	private _pausedStatus: Promise<GitPausedOperationStatus | undefined> | undefined;
+	private getPausedStatus(): Promise<GitPausedOperationStatus | undefined> {
+		this._pausedStatus ??=
+			this.view.container.git
+				.getRepositoryService(this.commit.repoPath)
+				.pausedOps?.getPausedOperationStatus?.() ?? Promise.resolve(undefined);
+		return this._pausedStatus;
+	}
+
+	private _conflictPaths:
+		| { mergeBasePath: string; headPath: string; incomingPath: string; incomingRef: string }
+		| undefined;
+	private async resolveConflictPaths(): Promise<typeof this._conflictPaths> {
+		if (this._conflictPaths != null) return this._conflictPaths;
+
+		const status = await this.getPausedStatus();
+		if (status?.mergeBase == null) return undefined;
+
+		const svc = this.view.container.git.getRepositoryService(this.repoPath);
+		const incomingRef = getConflictIncomingRef(status);
+
+		const [currentFilesResult, incomingFilesResult] = await Promise.allSettled([
+			svc.diff.getDiffStatus(status.mergeBase, 'HEAD', { renameLimit: 0 }),
+			incomingRef != null ? svc.diff.getDiffStatus(status.mergeBase, incomingRef, { renameLimit: 0 }) : undefined,
+		]);
+
+		const currentFiles = getSettledValue(currentFilesResult);
+		const incomingFiles = getSettledValue(incomingFilesResult);
+
+		const currentPaths = resolveConflictFilePaths(currentFiles, incomingFiles, this.file.path);
+		const incomingPaths = resolveConflictFilePaths(incomingFiles, currentFiles, this.file.path);
+
+		this._conflictPaths = {
+			mergeBasePath: currentPaths.lhsPath,
+			headPath: currentPaths.rhsPath,
+			incomingPath: incomingPaths.rhsPath,
+			incomingRef: incomingRef ?? 'MERGE_HEAD',
+		};
+		return this._conflictPaths;
+	}
+
 	async getChildren(): Promise<ViewNode[]> {
 		if (!this.commit.file?.hasConflicts) return [];
 
-		const pausedOpStatus = await this.view.container.git
-			.getRepositoryService(this.commit.repoPath)
-			.status.getPausedOperationStatus?.();
+		const pausedOpStatus = await this.getPausedStatus();
 		if (pausedOpStatus == null) return [];
 
+		const paths = await this.resolveConflictPaths();
+
+		const currentPaths = paths != null ? { lhsPath: paths.mergeBasePath, rhsPath: paths.headPath } : undefined;
+		const incomingPaths = paths != null ? { lhsPath: paths.mergeBasePath, rhsPath: paths.incomingPath } : undefined;
+
+		const currentFile = this.createResolvedFile(currentPaths);
+		const incomingFile = this.createResolvedFile(incomingPaths);
+
 		return [
-			new MergeConflictCurrentChangesNode(this.view, this, pausedOpStatus, this.file),
-			new MergeConflictIncomingChangesNode(this.view, this, pausedOpStatus, this.file),
+			new MergeConflictChangesNode(
+				this.view,
+				this,
+				pausedOpStatus,
+				currentFile,
+				'current',
+				currentPaths?.lhsPath,
+				this.file.path,
+			),
+			new MergeConflictChangesNode(
+				this.view,
+				this,
+				pausedOpStatus,
+				incomingFile,
+				'incoming',
+				incomingPaths?.lhsPath,
+				this.file.path,
+			),
 		];
+	}
+
+	private createResolvedFile(paths: { lhsPath: string; rhsPath: string } | undefined): GitFile {
+		if (paths == null || paths.rhsPath === this.file.path) return this.file;
+
+		return { ...this.file, path: paths.rhsPath, originalPath: paths.lhsPath };
 	}
 
 	async getTreeItem(): Promise<TreeItem> {
@@ -117,8 +187,8 @@ export class FileRevisionAsCommitNode extends ViewRefFileNode<
 		if (item.iconPath == null) {
 			const icon = getGitFileStatusIcon(this.file.status);
 			item.iconPath = {
-				dark: this.view.container.context.asAbsolutePath(joinPaths('images', 'dark', icon)),
-				light: this.view.container.context.asAbsolutePath(joinPaths('images', 'light', icon)),
+				dark: Uri.file(this.view.container.context.asAbsolutePath(joinPaths('images', 'dark', icon))),
+				light: Uri.file(this.view.container.context.asAbsolutePath(joinPaths('images', 'light', icon))),
 			};
 		}
 
@@ -128,17 +198,18 @@ export class FileRevisionAsCommitNode extends ViewRefFileNode<
 	}
 
 	protected get contextValue(): string {
+		const submodule = this.file.submodule != null ? '+submodule' : '';
 		if (!this.commit.isUncommitted) {
 			return `${ContextValues.File}+committed${this._options.branch?.current ? '+current' : ''}${
 				this.isTip ? '+HEAD' : ''
-			}${this._options.unpublished ? '+unpublished' : ''}`;
+			}${this._options.unpublished ? '+unpublished' : ''}${submodule}`;
 		}
 
 		return this.commit.file?.hasConflicts
-			? `${ContextValues.File}+conflicted`
+			? `${ContextValues.File}+conflicted${submodule}`
 			: this.commit.isUncommittedStaged
-				? `${ContextValues.File}+staged`
-				: `${ContextValues.File}+unstaged`;
+				? `${ContextValues.File}+staged${submodule}`
+				: `${ContextValues.File}+unstaged${submodule}`;
 	}
 
 	override getCommand(): Command | undefined {
@@ -151,14 +222,18 @@ export class FileRevisionAsCommitNode extends ViewRefFileNode<
 		}
 
 		if (this.commit.file?.hasConflicts) {
+			const incomingRef = this._conflictPaths?.incomingRef ?? 'MERGE_HEAD';
+			const incomingPath = this._conflictPaths?.incomingPath ?? this.file.path;
+			const headPath = this._conflictPaths?.headPath ?? this.file.path;
+
 			return createCommand<[DiffWithCommandArgs]>('gitlens.diffWith', 'Open Changes', {
 				lhs: {
-					sha: 'MERGE_HEAD',
-					uri: GitUri.fromFile(this.file, this.repoPath, undefined, true),
+					sha: incomingRef,
+					uri: GitUri.fromFile(incomingPath, this.repoPath, undefined, true),
 				},
 				rhs: {
 					sha: 'HEAD',
-					uri: GitUri.fromFile(this.file, this.repoPath),
+					uri: GitUri.fromFile(headPath, this.repoPath),
 				},
 				repoPath: this.repoPath,
 				range: editorLineToDiffRange(0),
@@ -167,7 +242,7 @@ export class FileRevisionAsCommitNode extends ViewRefFileNode<
 		}
 
 		return createCommand<[undefined, DiffWithPreviousCommandArgs]>(
-			'gitlens.diffWithPrevious',
+			'gitlens.diffWithPrevious:views',
 			'Open Changes with Previous Revision',
 			undefined,
 			{
@@ -180,6 +255,11 @@ export class FileRevisionAsCommitNode extends ViewRefFileNode<
 	}
 
 	override async resolveTreeItem(item: TreeItem, token: CancellationToken): Promise<TreeItem> {
+		if (this.commit.file?.hasConflicts) {
+			await this.resolveConflictPaths();
+			if (token.isCancellationRequested) return item;
+			item.command = this.getCommand();
+		}
 		item.tooltip ??= await this.getTooltip(token);
 		return item;
 	}
@@ -187,10 +267,14 @@ export class FileRevisionAsCommitNode extends ViewRefFileNode<
 	async getConflictBaseUri(): Promise<Uri | undefined> {
 		if (!this.commit.file?.hasConflicts) return undefined;
 
-		const mergeBase = await this.view.container.git
-			.getRepositoryService(this.repoPath)
-			.refs.getMergeBase('MERGE_HEAD', 'HEAD');
-		return GitUri.fromFile(this.file, this.repoPath, mergeBase ?? 'HEAD');
+		const paths = await this.resolveConflictPaths();
+		const status = await this.getPausedStatus();
+		const mergeBase =
+			status?.mergeBase ??
+			(await this.view.container.git.getRepositoryService(this.repoPath).refs.getMergeBase('MERGE_HEAD', 'HEAD'));
+
+		const filePath = paths?.mergeBasePath ?? this.file.path;
+		return GitUri.fromFile(filePath, this.repoPath, mergeBase ?? 'HEAD');
 	}
 
 	private async getTooltip(cancellation: CancellationToken) {
@@ -257,15 +341,20 @@ export async function getFileRevisionAsCommitTooltip(
 			outputFormat: 'markdown',
 		},
 	);
-	return CommitFormatter.fromTemplateAsync(tooltipWithStatusFormat.replace('{{slot-status}}', status), commit, {
-		enrichedAutolinks: enrichedAutolinks,
-		dateFormat: configuration.get('defaultDateFormat'),
-		getBranchAndTagTips: options?.getBranchAndTagTips,
-		messageAutolinks: true,
-		messageIndent: 4,
-		pullRequest: pr,
-		outputFormat: 'markdown',
-		remotes: remotes,
-		unpublished: options?.unpublished,
-	});
+	return CommitFormatter.fromTemplateAsync(
+		tooltipWithStatusFormat.replace('{{slot-status}}', status),
+		commit,
+		{ source: 'view:hover' },
+		{
+			enrichedAutolinks: enrichedAutolinks,
+			dateFormat: configuration.get('defaultDateFormat'),
+			getBranchAndTagTips: options?.getBranchAndTagTips,
+			messageAutolinks: true,
+			messageIndent: 4,
+			pullRequest: pr,
+			outputFormat: 'markdown',
+			remotes: remotes,
+			unpublished: options?.unpublished,
+		},
+	);
 }

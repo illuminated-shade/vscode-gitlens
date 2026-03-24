@@ -1,19 +1,19 @@
 import type { Uri } from 'vscode';
 import { window } from 'vscode';
-import type { ScmResource } from '../@types/vscode.git.resources';
-import { ScmResourceGroupType, ScmStatus } from '../@types/vscode.git.resources.enums';
-import type { Container } from '../container';
-import { push } from '../git/actions/stash';
-import { GitUri } from '../git/gitUri';
-import type { Repository } from '../git/models/repository';
-import { command } from '../system/-webview/command';
-import { GlCommandBase } from './commandBase';
-import type { CommandContext, CommandScmGroupsContext, CommandScmStatesContext } from './commandContext';
+import type { ScmResource } from '../@types/vscode.git.resources.d.js';
+import { ScmResourceGroupType, ScmStatus } from '../@types/vscode.git.resources.enums.js';
+import type { Container } from '../container.js';
+import { push } from '../git/actions/stash.js';
+import { GitUri } from '../git/gitUri.js';
+import type { Repository } from '../git/models/repository.js';
+import { command } from '../system/-webview/command.js';
+import { GlCommandBase } from './commandBase.js';
+import type { CommandContext, CommandScmGroupsContext, CommandScmStatesContext } from './commandContext.js';
 import {
 	isCommandContextViewNodeHasFile,
 	isCommandContextViewNodeHasRepoPath,
 	isCommandContextViewNodeHasRepository,
-} from './commandContext.utils';
+} from './commandContext.utils.js';
 
 export interface StashSaveCommandArgs {
 	message?: string;
@@ -23,6 +23,7 @@ export interface StashSaveCommandArgs {
 	keepStaged?: boolean;
 	onlyStaged?: boolean;
 	onlyStagedUris?: Uri[];
+	reducedConfirm?: boolean;
 }
 
 @command()
@@ -56,6 +57,14 @@ export class StashSaveCommand extends GlCommandBase {
 				if (repo != null) {
 					args = { ...args };
 					args.repoPath = repo.path;
+
+					const status = await repo.git.status.getStatus();
+					for (const file of status?.files ?? []) {
+						if (file.status === '?') {
+							args.includeUntracked = true;
+							break;
+						}
+					}
 				}
 			}
 		} else if (context.type === 'scm-states') {
@@ -63,6 +72,13 @@ export class StashSaveCommand extends GlCommandBase {
 			if (args == null) return;
 		} else if (context.type === 'scm-groups') {
 			args = await getStashSaveArgsForScmGroups(this.container, context, args);
+			if (args == null) return;
+		} else if (context.command === 'gitlens.stashSave.unstaged:scm') {
+			const repo = this.container.git.getBestRepository();
+			if (repo != null) {
+				args = await getStashSaveArgsForUnstagedScmGroup(repo, { ...args, repoPath: repo.path });
+			}
+
 			if (args == null) return;
 		}
 
@@ -78,6 +94,7 @@ export class StashSaveCommand extends GlCommandBase {
 			args?.keepStaged,
 			args?.onlyStaged,
 			args?.onlyStagedUris,
+			args?.reducedConfirm,
 		);
 	}
 }
@@ -126,23 +143,23 @@ async function getStashSaveArgsForScmStates(
 	}
 
 	let hasStaged = 0;
-	// let hasWorking = 0;
-	// let hasUntracked = 0;
+	let hasWorking = false;
+	let hasUntracked = false;
 
 	const status = await repo?.git.status.getStatus();
 	for (const file of status?.files ?? []) {
 		if (file.indexStatus) {
 			hasStaged++;
 		}
-		// if (file.workingTreeStatus) {
-		// 	hasWorking++;
-		// }
-		// if (file.status === '?') {
-		// 	hasUntracked++;
-		// }
+		if (file.workingTreeStatus) {
+			hasWorking = true;
+		}
+		if (file.status === '?') {
+			hasUntracked = true;
+		}
 	}
 
-	if (!selectedWorking && !selectedUntracked) {
+	if (!selectedWorking && !selectedUntracked && (hasWorking || hasUntracked)) {
 		if (!(await repo?.git?.supports('git:stash:push:staged'))) {
 			const confirm = { title: 'Stash All' };
 			const cancel = { title: 'Cancel', isCloseAffordance: true };
@@ -290,6 +307,7 @@ async function getStashSaveArgsForUnstagedScmGroup(
 		args.keepStaged = true;
 	}
 	args.includeUntracked = hasUntracked;
+	args.reducedConfirm = true;
 
 	return args;
 }

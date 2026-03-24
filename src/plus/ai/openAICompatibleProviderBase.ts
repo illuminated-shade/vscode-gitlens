@@ -1,21 +1,23 @@
 import type { CancellationToken } from 'vscode';
-import type { Response } from '@env/fetch';
-import { fetch } from '@env/fetch';
-import type { Role } from '../../@types/vsls';
-import type { AIProviders } from '../../constants.ai';
-import type { Container } from '../../container';
-import { AIError, AIErrorReason, CancellationError } from '../../errors';
-import { getLoggableName, Logger } from '../../system/logger';
-import { startLogScope } from '../../system/logger.scope';
-import type { ServerConnection } from '../gk/serverConnection';
-import type { AIActionType, AIModel, AIProviderDescriptor } from './models/model';
-import type { AIChatMessage, AIChatMessageRole, AIProvider, AIRequestResult } from './models/provider';
+import { uuid } from '@env/crypto.js';
+import type { Response } from '@env/fetch.js';
+import { fetch } from '@env/fetch.js';
+import type { Role } from '../../@types/vsls.d.js';
+import type { AIProviders } from '../../constants.ai.js';
+import type { Container } from '../../container.js';
+import { AIError, AIErrorReason, CancellationError, isCancellationError } from '../../errors.js';
+import { getLoggableName } from '../../system/logger.js';
+import { maybeStartScopedLogger } from '../../system/logger.scope.js';
+import type { ServerConnection } from '../gk/serverConnection.js';
+import type { AIActionType, AIModel, AIProviderDescriptor } from './models/model.js';
+import type { AIChatMessage, AIChatMessageRole, AIProvider, AIProviderResponse } from './models/provider.js';
 import {
 	getActionName,
 	getOrgAIProviderOfType,
 	getOrPromptApiKey,
+	getReducedMaxInputTokens,
 	getValidatedTemperature,
-} from './utils/-webview/ai.utils';
+} from './utils/-webview/ai.utils.js';
 
 export interface AIProviderConfig {
 	url: string;
@@ -37,7 +39,14 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 	protected abstract readonly config: { keyUrl?: string; keyValidator?: RegExp };
 
 	async configured(silent: boolean): Promise<boolean> {
-		return (await this.getApiKey(silent)) != null;
+		try {
+			const apiKey = await this.getApiKey(silent);
+			return apiKey != null;
+		} catch (ex) {
+			if (isCancellationError(ex)) return false;
+
+			throw ex;
+		}
 	}
 
 	async getApiKey(silent: boolean): Promise<string | undefined> {
@@ -81,10 +90,10 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 		action: TAction,
 		model: AIModel<T>,
 		apiKey: string,
-		getMessages: (maxCodeCharacters: number, retries: number) => Promise<AIChatMessage[]>,
+		getMessages: (maxInputTokens: number, retries: number) => Promise<AIChatMessage[]>,
 		options: { cancellation: CancellationToken; modelOptions?: { outputTokens?: number; temperature?: number } },
-	): Promise<AIRequestResult | undefined> {
-		using scope = startLogScope(`${getLoggableName(this)}.sendRequest`, false);
+	): Promise<AIProviderResponse<void> | undefined> {
+		using scope = maybeStartScopedLogger(`${getLoggableName(this)}.sendRequest`);
 
 		try {
 			const result = await this.fetch(
@@ -98,11 +107,11 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 			return result;
 		} catch (ex) {
 			if (ex instanceof CancellationError) {
-				Logger.error(ex, scope, `Cancelled request to ${getActionName(action)}: (${model.provider.name})`);
+				scope?.error(ex, `Cancelled request to ${getActionName(action)}: (${model.provider.name})`);
 				throw ex;
 			}
 
-			Logger.error(ex, scope, `Unable to ${getActionName(action)}: (${model.provider.name})`);
+			scope?.error(ex, `Unable to ${getActionName(action)}: (${model.provider.name})`);
 			if (ex instanceof AIError) throw ex;
 
 			debugger;
@@ -117,7 +126,7 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 		messages: (maxInputTokens: number, retries: number) => Promise<AIChatMessage[]>,
 		modelOptions?: { outputTokens?: number; temperature?: number },
 		cancellation?: CancellationToken,
-	): Promise<AIRequestResult> {
+	): Promise<AIProviderResponse<void>> {
 		let retries = 0;
 		let maxInputTokens = model.maxTokens.input;
 
@@ -129,7 +138,7 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 				max_completion_tokens: model.maxTokens.output
 					? Math.min(modelOptions?.outputTokens ?? Infinity, model.maxTokens.output)
 					: modelOptions?.outputTokens,
-				temperature: getValidatedTemperature(modelOptions?.temperature ?? model.temperature),
+				temperature: getValidatedTemperature(model, modelOptions?.temperature ?? model.temperature),
 			};
 
 			const rsp = await this.fetchCore(action, model, apiKey, request, cancellation);
@@ -143,8 +152,8 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 			}
 
 			const data: ChatCompletionResponse = await rsp.json();
-			const result: AIRequestResult = {
-				id: data.id,
+			const result: AIProviderResponse<void> = {
+				id: data.id ?? uuid(),
 				content: data.choices?.[0].message.content?.trim() ?? data.content?.[0]?.text?.trim() ?? '',
 				model: model,
 				usage: {
@@ -160,6 +169,7 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 								}
 							: undefined,
 				},
+				result: undefined,
 			};
 			return result;
 		}
@@ -192,9 +202,12 @@ export abstract class OpenAICompatibleProviderBase<T extends AIProviders> implem
 			json = (await rsp.json()) as { error?: { code: string; message: string } } | undefined;
 		} catch {}
 
+		if (Array.isArray(json)) {
+			json = json[0];
+		}
 		if (json?.error?.code === 'context_length_exceeded') {
-			if (retries < 2) {
-				return { retry: true, maxInputTokens: maxInputTokens - 200 * (retries || 1) };
+			if (retries < 3) {
+				return { retry: true, maxInputTokens: getReducedMaxInputTokens(maxInputTokens, retries + 1) };
 			}
 
 			throw new AIError(

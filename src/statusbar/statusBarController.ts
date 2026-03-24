@@ -1,23 +1,22 @@
 import type { ConfigurationChangeEvent, StatusBarItem, TextEditor, Uri } from 'vscode';
 import { CancellationTokenSource, Disposable, MarkdownString, StatusBarAlignment, window } from 'vscode';
-import type { ToggleFileChangesAnnotationCommandArgs } from '../commands/toggleFileAnnotations';
-import { GlyphChars } from '../constants';
-import type { GlCommands } from '../constants.commands';
-import type { Container } from '../container';
-import { CommitFormatter } from '../git/formatters/commitFormatter';
-import type { PullRequest } from '../git/models/pullRequest';
-import { detailsMessage } from '../hovers/hovers';
-import { createCommand } from '../system/-webview/command';
-import { configuration } from '../system/-webview/configuration';
-import { isTrackableTextEditor } from '../system/-webview/vscode/editors';
-import { createMarkdownCommandLink } from '../system/commands';
-import { debug } from '../system/decorators/log';
-import { once } from '../system/event';
-import { Logger } from '../system/logger';
-import { getLogScope, setLogScopeExit } from '../system/logger.scope';
-import type { MaybePausedResult } from '../system/promise';
-import { getSettledValue, pauseOnCancelOrTimeout } from '../system/promise';
-import type { LinesChangeEvent, LineState } from '../trackers/lineTracker';
+import type { ToggleFileChangesAnnotationCommandArgs } from '../commands/toggleFileAnnotations.js';
+import type { GlCommands } from '../constants.commands.js';
+import { GlyphChars } from '../constants.js';
+import type { Container } from '../container.js';
+import { CommitFormatter } from '../git/formatters/commitFormatter.js';
+import type { PullRequest } from '../git/models/pullRequest.js';
+import { detailsMessage } from '../hovers/hovers.js';
+import { createCommand } from '../system/-webview/command.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { isTrackableTextEditor } from '../system/-webview/vscode/editors.js';
+import { createMarkdownCommandLink } from '../system/commands.js';
+import { trace } from '../system/decorators/log.js';
+import { once } from '../system/event.js';
+import { getScopedLogger } from '../system/logger.scope.js';
+import type { MaybePausedResult } from '../system/promise.js';
+import { getSettledValue, pauseOnCancelOrTimeout } from '../system/promise.js';
+import type { LinesChangeEvent, LineState } from '../trackers/lineTracker.js';
 
 export class StatusBarController implements Disposable {
 	private _cancellation: CancellationTokenSource | undefined;
@@ -126,13 +125,12 @@ export class StatusBarController implements Disposable {
 		}
 	}
 
-	@debug<StatusBarController['onActiveLinesChanged']>({
-		args: {
-			0: e =>
-				`editor=${e.editor?.document.uri.toString(true)}, selections=${e.selections
-					?.map(s => `[${s.anchor}-${s.active}]`)
-					.join(',')}, pending=${Boolean(e.pending)}, reason=${e.reason}`,
-		},
+	@trace({
+		args: e => ({
+			e: `editor=${e.editor?.document.uri.toString(true)}, selections=${e.selections
+				?.map(s => `[${s.anchor}-${s.active}]`)
+				.join(',')}, pending=${Boolean(e.pending)}, reason=${e.reason}`,
+		}),
 	})
 	private onActiveLinesChanged(e: LinesChangeEvent) {
 		// If we need to reduceFlicker, don't clear if only the selected lines changed
@@ -206,20 +204,17 @@ export class StatusBarController implements Disposable {
 		this._statusBarBlame?.hide();
 	}
 
-	@debug<StatusBarController['updateBlame']>({ args: { 1: s => s.commit?.sha } })
+	@trace({ args: (editor, state) => ({ editor: editor, state: state.commit?.sha }) })
 	private async updateBlame(editor: TextEditor, state: LineState) {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const cfg = configuration.get('statusBar');
 		if (!cfg.enabled || this._statusBarBlame == null || !isTrackableTextEditor(editor)) {
 			this._cancellation?.cancel();
 			this._selectedSha = undefined;
 
-			setLogScopeExit(
-				scope,
-				` \u2022 skipped; ${
-					!cfg.enabled || this._statusBarBlame == null ? 'disabled' : 'not a trackable editor'
-				}`,
+			scope?.addExitInfo(
+				`skipped; ${!cfg.enabled || this._statusBarBlame == null ? 'disabled' : 'not a trackable editor'}`,
 			);
 
 			return;
@@ -229,7 +224,7 @@ export class StatusBarController implements Disposable {
 		if (commit == null) {
 			this._cancellation?.cancel();
 
-			setLogScopeExit(scope, ' \u2022 skipped; no commit found');
+			scope?.addExitInfo('skipped; no commit found');
 
 			return;
 		}
@@ -240,7 +235,7 @@ export class StatusBarController implements Disposable {
 				this._statusBarBlame.text = `$(git-commit)${this._statusBarBlame.text.substring(8)}`;
 			}
 
-			setLogScopeExit(scope, ' \u2022 skipped; same commit');
+			scope?.addExitInfo('skipped; same commit');
 
 			return;
 		}
@@ -296,12 +291,13 @@ export class StatusBarController implements Disposable {
 				actionTooltip = 'Click to Toggle Git CodeLens';
 				break;
 			case 'gitlens.toggleFileBlame':
+				this._statusBarBlame.command = 'gitlens.toggleFileBlame:statusbar' satisfies GlCommands;
 				actionTooltip = 'Click to Toggle File Blame';
 				break;
 			case 'gitlens.toggleFileChanges': {
 				if (commit.file != null) {
 					this._statusBarBlame.command = createCommand<[Uri, ToggleFileChangesAnnotationCommandArgs]>(
-						'gitlens.toggleFileChanges',
+						'gitlens.toggleFileChanges:statusbar',
 						'Toggle File Changes',
 						commit.file.uri,
 						{
@@ -309,6 +305,8 @@ export class StatusBarController implements Disposable {
 							context: { sha: commit.sha, only: false, selection: false },
 						},
 					);
+				} else {
+					this._statusBarBlame.command = 'gitlens.toggleFileChanges:statusbar' satisfies GlCommands;
 				}
 				actionTooltip = 'Click to Toggle File Changes';
 				break;
@@ -316,7 +314,7 @@ export class StatusBarController implements Disposable {
 			case 'gitlens.toggleFileChangesOnly': {
 				if (commit.file != null) {
 					this._statusBarBlame.command = createCommand<[Uri, ToggleFileChangesAnnotationCommandArgs]>(
-						'gitlens.toggleFileChanges',
+						'gitlens.toggleFileChanges:statusbar',
 						'Toggle File Changes',
 						commit.file.uri,
 						{
@@ -324,11 +322,14 @@ export class StatusBarController implements Disposable {
 							context: { sha: commit.sha, only: true, selection: false },
 						},
 					);
+				} else {
+					this._statusBarBlame.command = 'gitlens.toggleFileChanges:statusbar' satisfies GlCommands;
 				}
 				actionTooltip = 'Click to Toggle File Changes';
 				break;
 			}
 			case 'gitlens.toggleFileHeatmap':
+				this._statusBarBlame.command = 'gitlens.toggleFileHeatmap:statusbar' satisfies GlCommands;
 				actionTooltip = 'Click to Toggle File Heatmap';
 				break;
 		}
@@ -403,6 +404,7 @@ export class StatusBarController implements Disposable {
 				pullRequests: showPullRequests && pr != null,
 				remotes: remotes,
 				timeout: timeout,
+				sourceName: 'statusbar:hover',
 			});
 		}
 
@@ -420,7 +422,7 @@ export class StatusBarController implements Disposable {
 
 					// If the PR is taking too long, refresh the status bar once it completes
 
-					Logger.debug(scope, `${GlyphChars.Dot} pull request query took too long (over ${timeout} ms)`);
+					scope?.warn(`\u2022 pull request query took too long (over ${timeout} ms)`);
 
 					const [getBranchAndTagTipsResult, prResult] = await Promise.allSettled([
 						getBranchAndTagTipsPromise,
@@ -432,7 +434,7 @@ export class StatusBarController implements Disposable {
 					const pr = getSettledValue(prResult);
 					const getBranchAndTagTips = getSettledValue(getBranchAndTagTipsResult);
 
-					Logger.debug(scope, `${GlyphChars.Dot} pull request query completed; updating...`);
+					scope?.trace('\u2022  pull request query completed; updating...');
 
 					setBlameText(this._statusBarBlame, getBranchAndTagTips, pr);
 

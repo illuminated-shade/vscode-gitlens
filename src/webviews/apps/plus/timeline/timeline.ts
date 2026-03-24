@@ -2,42 +2,43 @@ import './timeline.scss';
 import { html, LitElement, nothing } from 'lit';
 import { customElement, query, state } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
-import type { GitReference } from '../../../../git/models/reference';
-import { setAbbreviatedShaLength } from '../../../../git/utils/revision.utils';
-import { isSubscriptionPaid } from '../../../../plus/gk/utils/subscription.utils';
-import type { Deferrable } from '../../../../system/function/debounce';
-import { debounce } from '../../../../system/function/debounce';
-import { dirname } from '../../../../system/path';
-import type { State, TimelinePeriod, TimelineScopeType } from '../../../plus/timeline/protocol';
+import type { GitReference } from '../../../../git/models/reference.js';
+import { setAbbreviatedShaLength } from '../../../../git/utils/revision.utils.js';
+import { isSubscriptionPaid } from '../../../../plus/gk/utils/subscription.utils.js';
+import type { Deferrable } from '../../../../system/function/debounce.js';
+import { debounce } from '../../../../system/function/debounce.js';
+import { dirname } from '../../../../system/path.js';
+import type { State, TimelinePeriod, TimelineScopeType } from '../../../plus/timeline/protocol.js';
 import {
 	ChoosePathRequest,
 	ChooseRefRequest,
 	SelectDataPointCommand,
 	UpdateConfigCommand,
 	UpdateScopeCommand,
-} from '../../../plus/timeline/protocol';
-import { GlAppHost } from '../../shared/appHost';
-import type { Checkbox } from '../../shared/components/checkbox/checkbox';
-import type { GlRefButton } from '../../shared/components/ref-button';
-import type { HostIpc } from '../../shared/ipc';
-import { linkStyles, ruleStyles } from '../shared/components/vscode.css';
-import type { CommitEventDetail, GlTimelineChart } from './components/chart';
-import { TimelineStateProvider } from './stateProvider';
-import { timelineBaseStyles, timelineStyles } from './timeline.css';
-import './components/chart';
-import '../../shared/components/breadcrumbs';
-import '../../shared/components/button';
-import '../../shared/components/checkbox/checkbox';
-import '../../shared/components/code-icon';
-import '../../shared/components/copy-container';
-import '../../shared/components/feature-badge';
-import '../../shared/components/feature-gate';
-import '../../shared/components/menu/menu-label';
-import '../../shared/components/progress';
-import '../../shared/components/overlays/popover';
-import '../../shared/components/ref-button';
-import '../../shared/components/ref-name';
-import '../../shared/components/repo-button-group';
+} from '../../../plus/timeline/protocol.js';
+import { GlAppHost } from '../../shared/appHost.js';
+import type { Checkbox } from '../../shared/components/checkbox/checkbox.js';
+import type { GlRefButton } from '../../shared/components/ref-button.js';
+import type { LoggerContext } from '../../shared/contexts/logger.js';
+import type { HostIpc } from '../../shared/ipc.js';
+import { linkStyles, ruleStyles } from '../shared/components/vscode.css.js';
+import type { CommitEventDetail, GlTimelineChart } from './components/chart.js';
+import { TimelineStateProvider } from './stateProvider.js';
+import { timelineBaseStyles, timelineStyles } from './timeline.css.js';
+import './components/chart.js';
+import '../../shared/components/breadcrumbs.js';
+import '../../shared/components/button.js';
+import '../../shared/components/checkbox/checkbox.js';
+import '../../shared/components/code-icon.js';
+import '../../shared/components/copy-container.js';
+import '../../shared/components/feature-badge.js';
+import '../../shared/components/feature-gate.js';
+import '../../shared/components/menu/menu-label.js';
+import '../../shared/components/progress.js';
+import '../../shared/components/overlays/popover.js';
+import '../../shared/components/ref-button.js';
+import '../../shared/components/ref-name.js';
+import '../../shared/components/repo-button-group.js';
 
 @customElement('gl-timeline-app')
 export class GlTimelineApp extends GlAppHost<State> {
@@ -51,12 +52,12 @@ export class GlTimelineApp extends GlAppHost<State> {
 	@query('#chart')
 	private _chart?: GlTimelineChart;
 
-	protected override createStateProvider(state: State, ipc: HostIpc): TimelineStateProvider {
-		return new TimelineStateProvider(this, state, ipc);
-	}
-
-	protected override onPersistState(state: State): void {
-		this._ipc.setPersistedState({ config: state.config, scope: state.scope });
+	protected override createStateProvider(
+		bootstrap: string,
+		ipc: HostIpc,
+		logger: LoggerContext,
+	): TimelineStateProvider {
+		return new TimelineStateProvider(this, bootstrap, ipc, logger);
 	}
 
 	override connectedCallback(): void {
@@ -112,6 +113,7 @@ export class GlTimelineApp extends GlAppHost<State> {
 		if (this.placement === 'editor') {
 			return html`<gl-feature-gate
 				?hidden=${this.allowed !== false}
+				featureRestriction="private-repos"
 				.source=${{ source: 'timeline' as const, detail: 'gate' }}
 				.state=${this.subscription?.state}
 				><p slot="feature">
@@ -128,6 +130,7 @@ export class GlTimelineApp extends GlAppHost<State> {
 
 		return html`<gl-feature-gate
 			?hidden=${this.allowed !== false}
+			featureRestriction="private-repos"
 			.source=${{ source: 'timeline' as const, detail: 'gate' }}
 			.state=${this.subscription?.state}
 			><p slot="feature">
@@ -195,14 +198,14 @@ export class GlTimelineApp extends GlAppHost<State> {
 
 		return html`<gl-breadcrumb-item
 			collapsibleState="${this.state.scope?.relativePath ? 'collapsed' : 'expanded'}"
-			icon="repo"
+			icon="gl-repository"
 			shrink="10000000"
 			type="repo"
 		>
 			<gl-repo-button-group
 				aria-label="Visualize Repository History"
 				.connectIcon=${false}
-				.hasMultipleRepositories=${false /* TODO support repositories switching */}
+				.hasMultipleRepositories=${this.state.repositories.openCount > 1}
 				.icon=${false}
 				.repository=${repo}
 				.source=${{ source: 'timeline' } as const}

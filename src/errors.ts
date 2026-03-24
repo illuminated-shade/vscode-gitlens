@@ -1,9 +1,10 @@
 import type { Uri } from 'vscode';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { CancellationError as _CancellationError } from 'vscode';
-import type { Response } from '@env/fetch';
-import type { RequiredSubscriptionPlanIds, Subscription } from './plus/gk/models/subscription';
-import { isSubscriptionPaidPlan } from './plus/gk/utils/subscription.utils';
+import type { Response } from '@env/fetch.js';
+import type { RequiredSubscriptionPlanIds, Subscription } from './plus/gk/models/subscription.js';
+import { isSubscriptionPaidPlan } from './plus/gk/utils/subscription.utils.js';
+import type { TokenInfo } from './plus/integrations/authentication/models.js';
 
 export class AccessDeniedError extends Error {
 	public readonly subscription: Subscription;
@@ -23,7 +24,7 @@ export class AccessDeniedError extends Error {
 
 		this.subscription = subscription;
 		this.required = required;
-		Error.captureStackTrace?.(this, AccessDeniedError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -39,7 +40,7 @@ export class AccountValidationError extends Error {
 		this.original = original;
 		this.statusCode = statusCode;
 		this.statusText = statusText;
-		Error.captureStackTrace?.(this, AccountValidationError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -53,10 +54,22 @@ export class AuthenticationError extends Error {
 	readonly id: string;
 	readonly original?: Error;
 	readonly reason: AuthenticationErrorReason | undefined;
+	readonly authInfo: string;
 
-	constructor(id: string, reason?: AuthenticationErrorReason, original?: Error);
-	constructor(id: string, message?: string, original?: Error);
-	constructor(id: string, messageOrReason: string | AuthenticationErrorReason | undefined, original?: Error) {
+	constructor(info: TokenInfo, reason?: AuthenticationErrorReason, original?: Error);
+	constructor(info: TokenInfo, message?: string, original?: Error);
+	constructor(info: TokenInfo, messageOrReason: string | AuthenticationErrorReason | undefined, original?: Error) {
+		const { providerId: id, type, cloud, scopes, expiresAt } = info;
+		const tokenDetails = [
+			cloud ? 'cloud' : 'self-managed',
+			type,
+			info.microHash,
+			expiresAt && `expiresAt=${isNaN(expiresAt.getTime()) ? expiresAt.toString() : expiresAt.toISOString()}`,
+			scopes && `[${scopes.join(',')}]`,
+		]
+			.filter(v => v)
+			.join(', ');
+		const authInfo = `(token details: ${tokenDetails})`;
 		let message;
 		let reason: AuthenticationErrorReason | undefined;
 		if (messageOrReason == null) {
@@ -83,7 +96,12 @@ export class AuthenticationError extends Error {
 		this.id = id;
 		this.original = original;
 		this.reason = reason;
-		Error.captureStackTrace?.(this, AuthenticationError);
+		this.authInfo = authInfo;
+		Error.captureStackTrace?.(this, new.target);
+	}
+
+	override toString(): string {
+		return `${super.toString()} ${this.authInfo}`;
 	}
 }
 
@@ -91,7 +109,7 @@ export class AuthenticationRequiredError extends Error {
 	constructor() {
 		super('Authentication required');
 
-		Error.captureStackTrace?.(this, AuthenticationRequiredError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -108,7 +126,7 @@ export class CancellationError extends _CancellationError {
 		} else {
 			this.message = 'Operation cancelled';
 		}
-		Error.captureStackTrace?.(this, CancellationError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -125,7 +143,7 @@ export class ExtensionNotFoundError extends Error {
 			`Unable to find the ${extensionName} extension (${extensionId}). Please ensure it is installed and enabled.`,
 		);
 
-		Error.captureStackTrace?.(this, ExtensionNotFoundError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -179,7 +197,7 @@ export class OpenVirtualRepositoryError extends Error {
 		this.original = original;
 		this.reason = reason;
 		this.repoPath = repoPath;
-		Error.captureStackTrace?.(this, OpenVirtualRepositoryError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -203,7 +221,7 @@ export class ProviderFetchError extends Error {
 			}`,
 		);
 
-		Error.captureStackTrace?.(this, ProviderFetchError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -219,7 +237,7 @@ export class ProviderNotFoundError extends Error {
 			}'`,
 		);
 
-		Error.captureStackTrace?.(this, ProviderNotFoundError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -227,7 +245,7 @@ export class ProviderNotSupportedError extends Error {
 	constructor(provider: string) {
 		super(`Action is not supported on the ${provider} provider.`);
 
-		Error.captureStackTrace?.(this, ProviderNotSupportedError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -235,7 +253,7 @@ export class RequestClientError extends Error {
 	constructor(public readonly original: Error) {
 		super(original.message);
 
-		Error.captureStackTrace?.(this, RequestClientError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -243,7 +261,7 @@ export class RequestNotFoundError extends Error {
 	constructor(public readonly original: Error) {
 		super(original.message);
 
-		Error.captureStackTrace?.(this, RequestNotFoundError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -255,7 +273,7 @@ export class RequestRateLimitError extends Error {
 	) {
 		super(original.message);
 
-		Error.captureStackTrace?.(this, RequestRateLimitError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -263,7 +281,7 @@ export class RequestGoneError extends Error {
 	constructor(public readonly original: Error) {
 		super(original.message);
 
-		Error.captureStackTrace?.(this, RequestGoneError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -271,7 +289,7 @@ export class RequestUnprocessableEntityError extends Error {
 	constructor(public readonly original: Error) {
 		super(original.message);
 
-		Error.captureStackTrace?.(this, RequestUnprocessableEntityError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -279,14 +297,14 @@ export class RequestsAreBlockedTemporarilyError extends Error {
 	constructor() {
 		super('Requests are blocked');
 
-		Error.captureStackTrace?.(this, RequestsAreBlockedTemporarilyError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
 export class RequiresIntegrationError extends Error {
 	constructor(message: string) {
 		super(message);
-		Error.captureStackTrace?.(this, RequiresIntegrationError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -353,7 +371,7 @@ export class AIError extends Error {
 
 		this.original = original;
 		this.reason = reason;
-		Error.captureStackTrace?.(this, AIError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }
 
@@ -361,6 +379,20 @@ export class AINoRequestDataError extends AIError {
 	constructor(message?: string) {
 		super(AIErrorReason.NoRequestData, message ? new Error(message) : undefined);
 
-		Error.captureStackTrace?.(this, AINoRequestDataError);
+		Error.captureStackTrace?.(this, new.target);
 	}
+}
+
+/**
+ * Gets a error message string suitable for user-facing UI and telemetry.
+ * For AuthenticationError instances, returns just the message property to avoid
+ * exposing technical token details (microHash, scopes, expiresAt).
+ * For all other errors, returns the string representation.
+ */
+export function getPresentableErrorMessage(error: Error | unknown): string {
+	if (error instanceof AuthenticationError) {
+		// avoid exposing sensitive token details: microHash, scopes, expiresAt.
+		return error.message;
+	}
+	return String(error);
 }

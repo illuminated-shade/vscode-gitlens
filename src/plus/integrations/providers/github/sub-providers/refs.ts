@@ -1,18 +1,21 @@
 import type { CancellationToken, Uri } from 'vscode';
-import type { Container } from '../../../../../container';
-import type { GitCache } from '../../../../../git/cache';
-import type { GitRefsSubProvider } from '../../../../../git/gitProvider';
-import type { GitBranch } from '../../../../../git/models/branch';
-import type { GitReference } from '../../../../../git/models/reference';
-import { deletedOrMissing } from '../../../../../git/models/revision';
-import type { GitTag } from '../../../../../git/models/tag';
-import { createReference } from '../../../../../git/utils/reference.utils';
-import { createRevisionRange, isShaWithOptionalRevisionSuffix } from '../../../../../git/utils/revision.utils';
-import { log } from '../../../../../system/decorators/log';
-import { Logger } from '../../../../../system/logger';
-import { getLogScope } from '../../../../../system/logger.scope';
-import type { GitHubGitProviderInternal } from '../githubGitProvider';
-import { stripOrigin } from '../githubGitProvider';
+import type { Container } from '../../../../../container.js';
+import type { GitCache } from '../../../../../git/cache.js';
+import type { GitRefsSubProvider } from '../../../../../git/gitProvider.js';
+import type { GitBranch } from '../../../../../git/models/branch.js';
+import type { GitReference } from '../../../../../git/models/reference.js';
+import { deletedOrMissing } from '../../../../../git/models/revision.js';
+import type { GitTag } from '../../../../../git/models/tag.js';
+import { createReference } from '../../../../../git/utils/reference.utils.js';
+import {
+	createRevisionRange,
+	isShaWithOptionalRevisionSuffix,
+	stripOrigin,
+} from '../../../../../git/utils/revision.utils.js';
+import { debug } from '../../../../../system/decorators/log.js';
+import { getScopedLogger } from '../../../../../system/logger.scope.js';
+import { toTokenWithInfo } from '../../../authentication/models.js';
+import type { GitHubGitProviderInternal } from '../githubGitProvider.js';
 
 // Since negative lookbehind isn't supported in all browsers, this leaves out the negative lookbehind condition `(?<!\.lock)` to ensure the branch name doesn't end with `.lock`
 // eslint-disable-next-line no-control-regex
@@ -25,12 +28,12 @@ export class RefsGitSubProvider implements GitRefsSubProvider {
 		private readonly provider: GitHubGitProviderInternal,
 	) {}
 
-	@log()
+	@debug()
 	checkIfCouldBeValidBranchOrTagName(ref: string, _repoPath?: string): Promise<boolean> {
 		return Promise.resolve(validBranchOrTagRegex.test(ref));
 	}
 
-	@log()
+	@debug()
 	async getMergeBase(
 		repoPath: string,
 		ref1: string,
@@ -40,26 +43,26 @@ export class RefsGitSubProvider implements GitRefsSubProvider {
 	): Promise<string | undefined> {
 		if (repoPath == null) return undefined;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		const { metadata, github, session } = await this.provider.ensureRepositoryContext(repoPath);
 
 		try {
 			const result = await github.getComparison(
-				session.accessToken,
+				toTokenWithInfo(this.provider.authenticationProviderId, session),
 				metadata.repo.owner,
 				metadata.repo.name,
 				createRevisionRange(stripOrigin(ref1), stripOrigin(ref2), '...'),
 			);
 			return result?.merge_base_commit?.sha;
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 			return undefined;
 		}
 	}
 
-	@log()
+	@debug()
 	async getReference(
 		repoPath: string,
 		ref: string,
@@ -94,7 +97,7 @@ export class RefsGitSubProvider implements GitRefsSubProvider {
 		return createReference(ref, repoPath, { refType: 'revision' });
 	}
 
-	@log()
+	@debug()
 	async hasBranchOrTag(
 		repoPath: string | undefined,
 		options?: {
@@ -124,7 +127,7 @@ export class RefsGitSubProvider implements GitRefsSubProvider {
 		return branches.length !== 0 || tags.length !== 0;
 	}
 
-	@log()
+	@debug()
 	isValidReference(
 		_repoPath: string,
 		_ref: string,
@@ -132,5 +135,15 @@ export class RefsGitSubProvider implements GitRefsSubProvider {
 		_cancellation?: CancellationToken,
 	): Promise<boolean> {
 		return Promise.resolve(true);
+	}
+
+	@debug()
+	updateReference(
+		_repoPath: string,
+		_ref: string,
+		_newRef: string,
+		_cancellation?: CancellationToken,
+	): Promise<void> {
+		return Promise.resolve();
 	}
 }

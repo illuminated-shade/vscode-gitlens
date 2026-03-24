@@ -1,5 +1,6 @@
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
+const hexPairRegex = /(\w{2})/g;
 
 // const precomputedByteToHex: string[] = [];
 // for (let i = 0; i <= 0xff; ++i) {
@@ -24,9 +25,7 @@ const precomputedByteToHex = [
 	'f7', 'f8', 'f9', 'fa', 'fb', 'fc', 'fd', 'fe', 'ff',
 ];
 
-export function encodeUtf8Hex(s: string): string {
-	const bytes = textEncoder.encode(s);
-
+export function convertToHex(bytes: Uint8Array): string {
 	const hex = new Array<string>(bytes.length);
 	for (let i = 0; i < bytes.length; ++i) {
 		hex[i] = precomputedByteToHex[bytes[i]];
@@ -34,8 +33,12 @@ export function encodeUtf8Hex(s: string): string {
 	return hex.join('');
 }
 
+export function encodeUtf8Hex(s: string): string {
+	return convertToHex(textEncoder.encode(s));
+}
+
 export function decodeUtf8Hex(hex: string): string {
-	const matches = hex.match(/(\w{2})/g);
+	const matches = hex.match(hexPairRegex);
 	if (matches === null) return '';
 
 	const bytes = new Uint8Array(matches.map(c => parseInt(c, 16)));

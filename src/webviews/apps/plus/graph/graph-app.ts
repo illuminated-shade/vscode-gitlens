@@ -1,46 +1,46 @@
-import type { GraphRow } from '@gitkraken/gitkraken-components';
+import type { GraphRow, SelectCommitsOptions } from '@gitkraken/gitkraken-components';
 import { refZone } from '@gitkraken/gitkraken-components';
 import { consume } from '@lit/context';
 import { SignalWatcher } from '@lit-labs/signals';
 import { html, LitElement } from 'lit';
 import { customElement, query } from 'lit/decorators.js';
 import { when } from 'lit/directives/when.js';
-import type { GitGraphRowType } from '../../../../git/models/graph';
-import { getScopedCounter } from '../../../../system/counter';
-import { GetRowHoverRequest } from '../../../plus/graph/protocol';
-import type { CustomEventType } from '../../shared/components/element';
-import { ipcContext } from '../../shared/contexts/ipc';
-import type { TelemetryContext } from '../../shared/contexts/telemetry';
-import { telemetryContext } from '../../shared/contexts/telemetry';
-import { emitTelemetrySentEvent } from '../../shared/telemetry';
-import { stateContext } from './context';
-import type { GlGraphWrapper } from './graph-wrapper/graph-wrapper';
-import type { GlGraphHover } from './hover/graphHover';
-import type { GraphMinimapDaySelectedEventDetail } from './minimap/minimap';
-import type { GlGraphMinimapContainer } from './minimap/minimap-container';
-import { graphStateContext } from './stateProvider';
-import './gate';
-import './graph-header';
-import './graph-wrapper/graph-wrapper';
-import './hover/graphHover';
-import './minimap/minimap-container';
-import './sidebar/sidebar';
+import type { SearchQuery } from '../../../../constants.search.js';
+import type { GitGraphRowType } from '../../../../git/models/graph.js';
+import { getScopedCounter } from '../../../../system/counter.js';
+import { GetRowHoverRequest } from '../../../plus/graph/protocol.js';
+import type { CustomEventType } from '../../shared/components/element.js';
+import { ipcContext } from '../../shared/contexts/ipc.js';
+import type { TelemetryContext } from '../../shared/contexts/telemetry.js';
+import { telemetryContext } from '../../shared/contexts/telemetry.js';
+import { emitTelemetrySentEvent } from '../../shared/telemetry.js';
+import { graphStateContext } from './context.js';
+import type { GlGraphHeader } from './graph-header.js';
+import type { GlGraphWrapper } from './graph-wrapper/graph-wrapper.js';
+import type { GlGraphHover } from './hover/graphHover.js';
+import type { GlGraphMinimapContainer } from './minimap/minimap-container.js';
+import type { GraphMinimapDaySelectedEventDetail } from './minimap/minimap.js';
+import './gate.js';
+import './graph-header.js';
+import './graph-wrapper/graph-wrapper.js';
+import './hover/graphHover.js';
+import './minimap/minimap-container.js';
+import './sidebar/sidebar.js';
+import '../../shared/components/mcp-banner.js';
 
 @customElement('gl-graph-app')
 export class GraphApp extends SignalWatcher(LitElement) {
 	private _hoverTrackingCounter = getScopedCounter();
 	private _selectionTrackingCounter = getScopedCounter();
+	private _lastSearchRequest: SearchQuery | undefined;
 
 	// use Light DOM
 	protected override createRenderRoot(): HTMLElement | DocumentFragment {
 		return this;
 	}
 
-	@consume({ context: stateContext, subscribe: true })
-	state!: typeof stateContext.__context__;
-
 	@consume({ context: graphStateContext, subscribe: true })
-	graphApp!: typeof graphStateContext.__context__;
+	graphState!: typeof graphStateContext.__context__;
 
 	@consume({ context: ipcContext })
 	private readonly _ipc!: typeof ipcContext.__context__;
@@ -50,6 +50,9 @@ export class GraphApp extends SignalWatcher(LitElement) {
 
 	@query('gl-graph-wrapper')
 	graph!: GlGraphWrapper;
+
+	@query('gl-graph-header')
+	private readonly graphHeader!: GlGraphHeader;
 
 	@query('gl-graph-hover#commit-hover')
 	private readonly graphHover!: GlGraphHover;
@@ -62,6 +65,23 @@ export class GraphApp extends SignalWatcher(LitElement) {
 
 		this._hoverTrackingCounter.reset();
 		this._selectionTrackingCounter.reset();
+
+		// Auto-focus the graph rows for keyboard navigation
+		this.graph?.focus();
+	}
+
+	override updated(changedProperties: Map<PropertyKey, unknown>): void {
+		super.updated(changedProperties);
+
+		// Check for external search request (from file history command, etc.)
+		const searchRequest = this.graphState.searchRequest;
+		if (searchRequest && searchRequest !== this._lastSearchRequest) {
+			this._lastSearchRequest = searchRequest;
+			// Wait for next render cycle to ensure graphHeader is ready
+			void this.updateComplete.then(() => {
+				this.graphHeader?.setExternalSearchQuery(searchRequest);
+			});
+		}
 	}
 
 	resetHover() {
@@ -73,30 +93,33 @@ export class GraphApp extends SignalWatcher(LitElement) {
 			<div class="graph">
 				<gl-graph-header
 					class="graph__header"
-					@gl-select-commits=${this.handleHeaderSearchNavigation}
+					.selectCommits=${this.selectCommits}
+					.getCommits=${this.getCommits}
 				></gl-graph-header>
 				<div class="graph__workspace">
-					${when(!this.state.allowed, () => html`<gl-graph-gate class="graph__gate"></gl-graph-gate>`)}
+					${when(!this.graphState.allowed, () => html`<gl-graph-gate class="graph__gate"></gl-graph-gate>`)}
 					<main id="main" class="graph__panes">
 						<div class="graph__graph-pane">
 							${when(
-								this.state.config?.minimap !== false,
+								this.graphState.config?.minimap !== false,
 								() => html`
 									<gl-graph-minimap-container
-										.activeDay=${this.graphApp.activeDay}
-										.disabled=${!this.state.config?.minimap}
-										.rows=${this.state.rows ?? []}
-										.rowsStats=${this.state.rowsStats}
-										.dataType=${this.state.config?.minimapDataType ?? 'commits'}
-										.markerTypes=${this.state.config?.minimapMarkerTypes ?? []}
-										.refMetadata=${this.state.refsMetadata}
-										.searchResults=${this.graphApp.searchResults}
-										.visibleDays=${this.graphApp.visibleDays}
+										.activeDay=${this.graphState.activeDay}
+										.disabled=${!this.graphState.config?.minimap}
+										.rows=${this.graphState.rows ?? []}
+										.rowsStats=${this.graphState.rowsStats}
+										.dataType=${this.graphState.config?.minimapDataType ?? 'commits'}
+										.markerTypes=${this.graphState.config?.minimapMarkerTypes ?? []}
+										.refMetadata=${this.graphState.refsMetadata}
+										.searchResults=${this.graphState.searchResults}
+										.visibleDays=${this.graphState.visibleDays
+											? { ...this.graphState.visibleDays } // Need to clone the object since it is a signal proxy
+											: undefined}
 										@gl-graph-minimap-selected=${this.handleMinimapDaySelected}
 									></gl-graph-minimap-container>
 								`,
 							)}
-							${when(this.state.config?.sidebar, () => html`<gl-graph-sidebar></gl-graph-sidebar>`)}
+							${when(this.graphState.config?.sidebar, () => html`<gl-graph-sidebar></gl-graph-sidebar>`)}
 							<gl-graph-hover id="commit-hover" distance=${0} skidding=${15}></gl-graph-hover>
 							<gl-graph-wrapper
 								@gl-graph-change-selection=${this.handleGraphSelectionChanged}
@@ -105,6 +128,7 @@ export class GraphApp extends SignalWatcher(LitElement) {
 								@gl-graph-row-context-menu=${this.handleGraphRowContextMenu}
 								@gl-graph-row-hover=${this.handleGraphRowHover}
 								@gl-graph-row-unhover=${this.handleGraphRowUnhover}
+								@row-action-hover=${this.handleGraphRowActionHover}
 							></gl-graph-wrapper>
 						</div>
 						<!-- future: commit details -->
@@ -114,12 +138,16 @@ export class GraphApp extends SignalWatcher(LitElement) {
 		`;
 	}
 
-	private handleHeaderSearchNavigation(e: CustomEventType<'gl-select-commits'>) {
-		this.graph.selectCommits([e.detail], false, true);
-	}
+	private selectCommits = (shas: string[], options?: SelectCommitsOptions) => {
+		return this.graph.selectCommits(shas, options);
+	};
+
+	private getCommits = (shas: string[]) => {
+		return this.graph.getCommits(shas);
+	};
 
 	private handleMinimapDaySelected(e: CustomEvent<GraphMinimapDaySelectedEventDetail>) {
-		if (!this.state.rows) return;
+		if (!this.graphState.rows) return;
 
 		let { sha } = e.detail;
 		if (sha == null) {
@@ -127,13 +155,13 @@ export class GraphApp extends SignalWatcher(LitElement) {
 			if (date == null) return;
 
 			// Find closest row to the date
-			const closest = this.state.rows.reduce((prev, curr) => {
+			const closest = this.graphState.rows.reduce((prev, curr) => {
 				return Math.abs(curr.date - date) < Math.abs(prev.date - date) ? curr : prev;
 			});
 			sha = closest.sha;
 		}
 
-		this.graph.selectCommits([sha], false, true);
+		this.graph.selectCommits([sha], { ensureVisible: true });
 
 		if (e.target != null) {
 			const { target } = e;
@@ -161,7 +189,7 @@ export class GraphApp extends SignalWatcher(LitElement) {
 	}
 
 	private handleGraphVisibleDaysChanged({ detail }: CustomEventType<'gl-graph-change-visible-days'>) {
-		this.graphApp.visibleDays = detail;
+		this.graphState.visibleDays = detail;
 	}
 
 	private handleGraphRowContextMenu(_e: CustomEventType<'gl-graph-row-context-menu'>) {
@@ -203,11 +231,13 @@ export class GraphApp extends SignalWatcher(LitElement) {
 	}
 
 	private handleGraphRowUnhover({
-		detail: { graphZoneType, graphRow, relatedTarget },
+		detail: { graphRow, relatedTarget },
 	}: CustomEventType<'gl-graph-row-unhover'>): void {
-		if (graphZoneType === refZone) return;
-
 		this.graphHover.onRowUnhovered(graphRow, relatedTarget);
+	}
+
+	private handleGraphRowActionHover() {
+		this.graphHover.hide();
 	}
 
 	private async getRowHoverPromise(row: GraphRow) {

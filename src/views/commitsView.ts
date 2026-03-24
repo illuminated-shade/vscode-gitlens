@@ -1,37 +1,36 @@
 import type { CancellationToken, ConfigurationChangeEvent } from 'vscode';
 import { Disposable, ProgressLocation, ThemeIcon, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import type { CommitsViewConfig, ViewFilesLayout } from '../config';
-import { GlyphChars } from '../constants';
-import type { Container } from '../container';
-import { GitUri } from '../git/gitUri';
-import type { GitCommit } from '../git/models/commit';
-import { isCommit } from '../git/models/commit';
-import type { GitRevisionReference } from '../git/models/reference';
-import type { RepositoryChangeEvent } from '../git/models/repository';
-import { RepositoryChange, RepositoryChangeComparisonMode } from '../git/models/repository';
-import type { GitUser } from '../git/models/user';
-import { matchContributor } from '../git/utils/contributor.utils';
-import { getLastFetchedUpdateInterval } from '../git/utils/fetch.utils';
-import { getReferenceLabel } from '../git/utils/reference.utils';
-import { showContributorsPicker } from '../quickpicks/contributorsPicker';
-import { getRepositoryOrShowPicker } from '../quickpicks/repositoryPicker';
-import { createCommand, executeCommand } from '../system/-webview/command';
-import { configuration } from '../system/-webview/configuration';
-import { setContext } from '../system/-webview/context';
-import { gate } from '../system/decorators/-webview/gate';
-import { debug } from '../system/decorators/log';
-import { disposableInterval } from '../system/function';
-import type { UsageChangeEvent } from '../telemetry/usageTracker';
-import { RepositoriesSubscribeableNode } from './nodes/abstract/repositoriesSubscribeableNode';
-import { RepositoryFolderNode } from './nodes/abstract/repositoryFolderNode';
-import type { ViewNode } from './nodes/abstract/viewNode';
-import { BranchNode } from './nodes/branchNode';
-import { BranchTrackingStatusNode } from './nodes/branchTrackingStatusNode';
-import { CommandMessageNode } from './nodes/common';
-import type { GroupedViewContext } from './viewBase';
-import { ViewBase } from './viewBase';
-import type { CopyNodeCommandArgs } from './viewCommands';
-import { registerViewCommand } from './viewCommands';
+import type { CommitsViewConfig, ViewFilesLayout } from '../config.js';
+import { GlyphChars } from '../constants.js';
+import type { Container } from '../container.js';
+import { GitUri } from '../git/gitUri.js';
+import type { GitCommit } from '../git/models/commit.js';
+import { isCommit } from '../git/models/commit.js';
+import type { GitRevisionReference } from '../git/models/reference.js';
+import type { RepositoryChangeEvent } from '../git/models/repository.js';
+import type { GitUser } from '../git/models/user.js';
+import { matchContributor } from '../git/utils/contributor.utils.js';
+import { getLastFetchedUpdateInterval } from '../git/utils/fetch.utils.js';
+import { getReferenceLabel } from '../git/utils/reference.utils.js';
+import { showContributorsPicker } from '../quickpicks/contributorsPicker.js';
+import { getRepositoryOrShowPicker } from '../quickpicks/repositoryPicker.js';
+import { createCommand, executeCommand } from '../system/-webview/command.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { setContext } from '../system/-webview/context.js';
+import { gate } from '../system/decorators/gate.js';
+import { trace } from '../system/decorators/log.js';
+import { disposableInterval } from '../system/function.js';
+import type { UsageChangeEvent } from '../telemetry/usageTracker.js';
+import { RepositoriesSubscribeableNode } from './nodes/abstract/repositoriesSubscribeableNode.js';
+import { RepositoryFolderNode } from './nodes/abstract/repositoryFolderNode.js';
+import type { ViewNode } from './nodes/abstract/viewNode.js';
+import { BranchNode } from './nodes/branchNode.js';
+import { BranchTrackingStatusNode } from './nodes/branchTrackingStatusNode.js';
+import { CommandMessageNode } from './nodes/common.js';
+import type { GroupedViewContext, RevealOptions } from './viewBase.js';
+import { ViewBase } from './viewBase.js';
+import type { CopyNodeCommandArgs } from './viewCommands.js';
+import { registerViewCommand } from './viewCommands.js';
 
 export class CommitsRepositoryNode extends RepositoryFolderNode<CommitsView, BranchNode> {
 	async getChildren(): Promise<ViewNode[]> {
@@ -70,7 +69,7 @@ export class CommitsRepositoryNode extends RepositoryFolderNode<CommitsView, Bra
 	}
 
 	@gate()
-	@debug()
+	@trace()
 	override async refresh(reset: boolean = false): Promise<void> {
 		if (reset) {
 			this.child = undefined;
@@ -81,7 +80,7 @@ export class CommitsRepositoryNode extends RepositoryFolderNode<CommitsView, Bra
 		await this.ensureSubscription();
 	}
 
-	@debug()
+	@trace()
 	protected override async subscribe(): Promise<Disposable> {
 		const lastFetched = (await this.repo?.getLastFetched()) ?? 0;
 
@@ -90,9 +89,13 @@ export class CommitsRepositoryNode extends RepositoryFolderNode<CommitsView, Bra
 			return Disposable.from(
 				await super.subscribe(),
 				disposableInterval(() => {
+					// Skip update if view is not visible to reduce unnecessary work
+					if (!this.view.visible) return;
+
 					// Check if the interval should change, and if so, reset it
 					if (interval !== getLastFetchedUpdateInterval(lastFetched)) {
 						void this.resetSubscription();
+						return;
 					}
 
 					if (this.splatted) {
@@ -108,19 +111,20 @@ export class CommitsRepositoryNode extends RepositoryFolderNode<CommitsView, Bra
 	}
 
 	protected changed(e: RepositoryChangeEvent): boolean {
-		if (this.view.config.showStashes && e.changed(RepositoryChange.Stash, RepositoryChangeComparisonMode.Any)) {
+		if (this.view.config.showStashes && e.changed('stash')) {
 			return true;
 		}
 
 		return e.changed(
-			RepositoryChange.Config,
-			RepositoryChange.Heads,
-			RepositoryChange.Index,
-			RepositoryChange.Remotes,
-			RepositoryChange.RemoteProviders,
-			RepositoryChange.PausedOperationStatus,
-			RepositoryChange.Unknown,
-			RepositoryChangeComparisonMode.Any,
+			'config',
+			'head',
+			'heads',
+			'index',
+			'remotes',
+			'remoteProviders',
+			'pausedOp',
+			'worktrees',
+			'unknown',
 		);
 	}
 }
@@ -135,16 +139,18 @@ export class CommitsViewNode extends RepositoriesSubscribeableNode<CommitsView, 
 				await this.view.container.git.isDiscoveringRepositories;
 			}
 
-			const repositories = this.view.container.git.openRepositories;
+			const repositories = this.view.getFilteredRepositories();
 			if (!repositories.length) {
 				this.view.message = 'No commits could be found.';
 
 				return [];
 			}
 
+			const repo = this.view.container.git.getBestRepositoryOrFirst();
 			this.children = repositories.map(
 				r =>
 					new CommitsRepositoryNode(GitUri.fromRepoPath(r.path), this.view, this, r, {
+						expand: r === repo,
 						showBranchAndLastFetched: true,
 					}),
 			);
@@ -260,6 +266,7 @@ export class CommitsView extends ViewBase<'commits', CommitsViewNode, CommitsVie
 				},
 				this,
 			),
+			registerViewCommand(this.getQualifiedCommand('filterRepositories'), () => this.filterRepositories(), this),
 			registerViewCommand(
 				this.getQualifiedCommand('setFilesLayoutToAuto'),
 				() => this.setFilesLayout('auto'),
@@ -396,14 +403,7 @@ export class CommitsView extends ViewBase<'commits', CommitsViewNode, CommitsVie
 	}
 
 	@gate(() => '')
-	async revealCommit(
-		commit: GitRevisionReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealCommit(commit: GitRevisionReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -425,14 +425,29 @@ export class CommitsView extends ViewBase<'commits', CommitsViewNode, CommitsVie
 	}
 
 	@gate(() => '')
-	async revealRepository(
-		repoPath: string,
-		options?: { select?: boolean; focus?: boolean; expand?: boolean | number },
-	): Promise<ViewNode | undefined> {
+	async revealRepository(repoPath: string, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const node = await this.findNode(n => n instanceof RepositoryFolderNode && n.repoPath === repoPath, {
 			maxDepth: 1,
 			canTraverse: n => n instanceof CommitsViewNode || n instanceof RepositoryFolderNode,
 		});
+
+		if (node !== undefined) {
+			await this.reveal(node, options);
+		}
+
+		return node;
+	}
+
+	@gate(() => '')
+	async revealPausedOperationStatus(repoPath: string, options?: RevealOptions): Promise<ViewNode | undefined> {
+		const node = await this.findNode(
+			n => n.is('paused-operation-status') && n.pausedOpStatus.repoPath === repoPath,
+			{
+				maxDepth: 3,
+				canTraverse: n =>
+					n instanceof CommitsViewNode || n instanceof RepositoryFolderNode || n instanceof BranchNode,
+			},
+		);
 
 		if (node !== undefined) {
 			await this.reveal(node, options);
@@ -463,7 +478,15 @@ export class CommitsView extends ViewBase<'commits', CommitsViewNode, CommitsVie
 		}
 
 		if (filter) {
-			repo ??= await getRepositoryOrShowPicker('Filter Commits', 'Choose a repository');
+			repo ??= await getRepositoryOrShowPicker(
+				this.container,
+				'Filter Commits',
+				'Choose a repository',
+				undefined,
+				{
+					excludeWorktrees: true,
+				},
+			);
 			if (repo == null) return;
 
 			let authors = this.state.filterCommits.get(repo.id);

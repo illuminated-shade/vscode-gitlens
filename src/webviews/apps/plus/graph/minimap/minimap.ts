@@ -1,14 +1,14 @@
 import type { Chart, DataItem, RegionOptions } from 'billboard.js';
 import { css, html } from 'lit';
 import { customElement, property, query } from 'lit/decorators.js';
-import type { ChartInternal, ChartWithInternal } from '../../../../../@types/bb';
-import { debug } from '../../../../../system/decorators/log';
-import { debounce } from '../../../../../system/function/debounce';
-import { first, flatMap, groupByMap, map, union } from '../../../../../system/iterable';
-import { capitalize, pluralize } from '../../../../../system/string';
-import { GlElement, observe } from '../../../shared/components/element';
-import { formatDate, formatNumeric, fromNow } from '../../../shared/date';
-import '../../../shared/components/overlays/tooltip';
+import type { ChartInternal, ChartWithInternal } from '../../../../../@types/bb.d.js';
+import { debug } from '../../../../../system/decorators/log.js';
+import { debounce } from '../../../../../system/function/debounce.js';
+import { first, flatMap, groupByMap, map, union } from '../../../../../system/iterable.js';
+import { capitalize, pluralize } from '../../../../../system/string.js';
+import { GlElement, observe } from '../../../shared/components/element.js';
+import { formatDate, formatNumeric, fromNow } from '../../../shared/date.js';
+import '../../../shared/components/overlays/tooltip.js';
 
 export interface BranchMarker {
 	type: 'branch';
@@ -550,7 +550,7 @@ export class GlGraphMinimap extends GlElement {
 		this._chart = undefined!;
 	}
 
-	@debug({ singleLine: true })
+	@debug({ onlyExit: true })
 	private handleDataChanged(markerChanged: boolean) {
 		if (this._loadTimer) {
 			clearTimeout(this._loadTimer);
@@ -724,10 +724,11 @@ export class GlGraphMinimap extends GlElement {
 		this._loading ??= this.loadChartCore().finally(() => (this._loading = undefined));
 	}
 
-	@debug({ singleLine: true })
+	@debug({ onlyExit: true })
 	private async loadChartCore() {
 		if (!this.data?.size) {
-			this.spinner.setAttribute('aria-hidden', 'false');
+			// Hide spinner if data is an empty Map (no commits), show if data is undefined (still loading)
+			this.spinner.setAttribute('aria-hidden', this.data != null ? 'true' : 'false');
 
 			this._chart?.destroy();
 			this._chart = undefined!;

@@ -1,15 +1,14 @@
-/* eslint-disable @typescript-eslint/no-restricted-imports -- TODO need to deal with sharing rich class shapes to webviews */
-import type { IntegrationIds } from '../../../constants.integrations';
-import type { Account } from '../../../git/models/author';
-import type { IssueShape } from '../../../git/models/issue';
-import type { ResourceDescriptor } from '../../../git/models/resourceDescriptor';
-import { gate } from '../../../system/decorators/-webview/gate';
-import { debug } from '../../../system/decorators/log';
-import { getLogScope } from '../../../system/logger.scope';
-import type { ProviderAuthenticationSession } from '../authentication/models';
-import type { IssueFilter } from '../providers/models';
-import type { Integration, IntegrationType } from './integration';
-import { IntegrationBase } from './integration';
+import type { IntegrationIds } from '../../../constants.integrations.js';
+import type { Account } from '../../../git/models/author.js';
+import type { IssueShape } from '../../../git/models/issue.js';
+import type { ResourceDescriptor } from '../../../git/models/resourceDescriptor.js';
+import { gate } from '../../../system/decorators/gate.js';
+import { trace } from '../../../system/decorators/log.js';
+import { getScopedLogger } from '../../../system/logger.scope.js';
+import type { ProviderAuthenticationSession } from '../authentication/models.js';
+import type { IssueFilter } from '../providers/models.js';
+import type { Integration, IntegrationType } from './integration.js';
+import { IntegrationBase } from './integration.js';
 
 export function isIssuesIntegration(integration: Integration): integration is IssuesIntegration {
 	return integration.type === 'issues';
@@ -22,9 +21,9 @@ export abstract class IssuesIntegration<
 	readonly type: IntegrationType = 'issues';
 
 	@gate()
-	@debug()
+	@trace()
 	async getAccountForResource(resource: T): Promise<Account | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		const connected = this.maybeConnected ?? (await this.isConnected());
 		if (!connected) return undefined;
 
@@ -32,10 +31,11 @@ export abstract class IssuesIntegration<
 
 		try {
 			const account = await this.getProviderAccountForResource(this._session!, resource);
-			this.resetRequestExceptionCount();
+			this.resetRequestExceptionCount('getAccountForResource');
 			return account;
 		} catch (ex) {
-			return this.handleProviderException<Account | undefined>(ex, undefined, undefined);
+			this.handleProviderException('getAccountForResource', ex);
+			return undefined;
 		}
 	}
 
@@ -45,9 +45,9 @@ export abstract class IssuesIntegration<
 	): Promise<Account | undefined>;
 
 	@gate()
-	@debug()
+	@trace()
 	async getResourcesForUser(): Promise<T[] | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		const connected = this.maybeConnected ?? (await this.isConnected());
 		if (!connected) return undefined;
 
@@ -55,18 +55,19 @@ export abstract class IssuesIntegration<
 
 		try {
 			const resources = await this.getProviderResourcesForUser(this._session!);
-			this.resetRequestExceptionCount();
+			this.resetRequestExceptionCount('getResourcesForUser');
 			return resources;
 		} catch (ex) {
-			return this.handleProviderException<T[] | undefined>(ex, undefined, undefined);
+			this.handleProviderException('getResourcesForUser', ex);
+			return undefined;
 		}
 	}
 
 	protected abstract getProviderResourcesForUser(session: ProviderAuthenticationSession): Promise<T[] | undefined>;
 
-	@debug()
+	@trace()
 	async getProjectsForResources(resources: T[]): Promise<T[] | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		const connected = this.maybeConnected ?? (await this.isConnected());
 		if (!connected) return undefined;
 
@@ -74,10 +75,11 @@ export abstract class IssuesIntegration<
 
 		try {
 			const projects = await this.getProviderProjectsForResources(this._session!, resources);
-			this.resetRequestExceptionCount();
+			this.resetRequestExceptionCount('getProjectsForResources');
 			return projects;
 		} catch (ex) {
-			return this.handleProviderException<T[] | undefined>(ex, undefined, undefined);
+			this.handleProviderException('getProjectsForResources', ex);
+			return undefined;
 		}
 	}
 
@@ -93,12 +95,12 @@ export abstract class IssuesIntegration<
 		resources: T[],
 	): Promise<T[] | undefined>;
 
-	@debug()
+	@trace()
 	async getIssuesForProject(
 		project: T,
 		options?: { user?: string; filters?: IssueFilter[] },
 	): Promise<IssueShape[] | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 		const connected = this.maybeConnected ?? (await this.isConnected());
 		if (!connected) return undefined;
 
@@ -106,10 +108,11 @@ export abstract class IssuesIntegration<
 
 		try {
 			const issues = await this.getProviderIssuesForProject(this._session!, project, options);
-			this.resetRequestExceptionCount();
+			this.resetRequestExceptionCount('getIssuesForProject');
 			return issues;
 		} catch (ex) {
-			return this.handleProviderException<IssueShape[] | undefined>(ex, undefined, undefined);
+			this.handleProviderException('getIssuesForProject', ex);
+			return undefined;
 		}
 	}
 

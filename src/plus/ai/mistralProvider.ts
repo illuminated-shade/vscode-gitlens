@@ -1,9 +1,10 @@
 import type { CancellationToken } from 'vscode';
-import type { Response } from '@env/fetch';
-import { mistralProviderDescriptor as provider } from '../../constants.ai';
-import { AIError, AIErrorReason } from '../../errors';
-import type { AIActionType, AIModel } from './models/model';
-import { OpenAICompatibleProviderBase } from './openAICompatibleProviderBase';
+import type { Response } from '@env/fetch.js';
+import { mistralProviderDescriptor as provider } from '../../constants.ai.js';
+import { AIError, AIErrorReason } from '../../errors.js';
+import type { AIActionType, AIModel } from './models/model.js';
+import { OpenAICompatibleProviderBase } from './openAICompatibleProviderBase.js';
+import { getReducedMaxInputTokens } from './utils/-webview/ai.utils.js';
 
 type MistralModel = AIModel<typeof provider.id>;
 const models: MistralModel[] = [
@@ -127,8 +128,8 @@ export class MistralProvider extends OpenAICompatibleProviderBase<typeof provide
 
 			if (json?.type === 'invalid_request_error') {
 				if (message?.includes('prompt is too long')) {
-					if (retries < 2) {
-						return { retry: true, maxInputTokens: maxInputTokens - 200 * (retries || 1) };
+					if (retries < 3) {
+						return { retry: true, maxInputTokens: getReducedMaxInputTokens(maxInputTokens, retries + 1) };
 					}
 
 					throw new AIError(

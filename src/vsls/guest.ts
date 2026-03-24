@@ -1,21 +1,20 @@
 import type { CancellationToken, Disposable, Uri } from 'vscode';
 import { window } from 'vscode';
-import type { LiveShare, SharedServiceProxy } from '../@types/vsls';
-import type { Container } from '../container';
+import type { LiveShare, SharedServiceProxy } from '../@types/vsls.d.js';
+import type { Container } from '../container.js';
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports -- Allowed since it is a type import
-import type { GitResult } from '../env/node/git/git';
-import type { GitCommandOptions } from '../git/commandOptions';
-import { debug, log } from '../system/decorators/log';
-import { Logger } from '../system/logger';
-import { getLogScope } from '../system/logger.scope';
-import { VslsHostService } from './host';
-import type { RepositoryProxy, RequestType } from './protocol';
-import { GetRepositoriesForUriRequestType, GitCommandRequestType } from './protocol';
+import type {} from '../env/node/git/git.js';
+import type { GitExecOptions, GitResult } from '../git/execTypes.js';
+import { debug, trace } from '../system/decorators/log.js';
+import { getScopedLogger } from '../system/logger.scope.js';
+import { VslsHostService } from './host.js';
+import type { RepositoryProxy, RequestType } from './protocol.js';
+import { GetRepositoriesForUriRequestType, GitCommandRequestType } from './protocol.js';
 
 export class VslsGuestService implements Disposable {
-	@log()
+	@debug()
 	static async connect(api: LiveShare, container: Container): Promise<VslsGuestService | undefined> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const service = await api.getSharedService(VslsHostService.ServiceId);
@@ -25,7 +24,7 @@ export class VslsGuestService implements Disposable {
 
 			return new VslsGuestService(api, service, container);
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			return undefined;
 		}
 	}
@@ -43,7 +42,7 @@ export class VslsGuestService implements Disposable {
 		// nothing to dispose
 	}
 
-	@log()
+	@debug()
 	private onAvailabilityChanged(available: boolean) {
 		if (available) {
 			void this.container.git.setEnabledContext(true);
@@ -57,8 +56,8 @@ export class VslsGuestService implements Disposable {
 		);
 	}
 
-	@log()
-	async git<TOut extends string | Buffer>(options: GitCommandOptions, ...args: any[]): Promise<GitResult<TOut>> {
+	@debug()
+	async git<TOut extends string | Buffer>(options: GitExecOptions, ...args: any[]): Promise<GitResult<TOut>> {
 		const response = await this.sendRequest(GitCommandRequestType, {
 			__type: 'gitlens',
 			options: options,
@@ -71,7 +70,7 @@ export class VslsGuestService implements Disposable {
 		};
 	}
 
-	@log()
+	@debug()
 	async getRepositoriesForUri(uri: Uri): Promise<RepositoryProxy[]> {
 		const response = await this.sendRequest(GetRepositoriesForUriRequestType, {
 			__type: 'gitlens',
@@ -81,7 +80,7 @@ export class VslsGuestService implements Disposable {
 		return response.repositories;
 	}
 
-	@debug()
+	@trace()
 	private sendRequest<TRequest, TResponse>(
 		requestType: RequestType<TRequest, TResponse>,
 		request: TRequest & { __type: string },

@@ -1,24 +1,22 @@
 import type { CancellationToken, ConfigurationChangeEvent, Disposable } from 'vscode';
 import { ProgressLocation, TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import type { StashesViewConfig, ViewFilesLayout } from '../config';
-import type { Container } from '../container';
-import { GitUri } from '../git/gitUri';
-import type { GitStashReference } from '../git/models/reference';
-import type { RepositoryChangeEvent } from '../git/models/repository';
-import { RepositoryChange, RepositoryChangeComparisonMode } from '../git/models/repository';
-import { groupRepositories } from '../git/utils/-webview/repository.utils';
-import { getReferenceLabel } from '../git/utils/reference.utils';
-import { executeCommand } from '../system/-webview/command';
-import { configuration } from '../system/-webview/configuration';
-import { gate } from '../system/decorators/-webview/gate';
-import { RepositoriesSubscribeableNode } from './nodes/abstract/repositoriesSubscribeableNode';
-import { RepositoryFolderNode } from './nodes/abstract/repositoryFolderNode';
-import type { ViewNode } from './nodes/abstract/viewNode';
-import { StashesNode } from './nodes/stashesNode';
-import type { GroupedViewContext } from './viewBase';
-import { ViewBase } from './viewBase';
-import type { CopyNodeCommandArgs } from './viewCommands';
-import { registerViewCommand } from './viewCommands';
+import type { StashesViewConfig, ViewFilesLayout } from '../config.js';
+import type { Container } from '../container.js';
+import { GitUri } from '../git/gitUri.js';
+import type { GitStashReference } from '../git/models/reference.js';
+import type { RepositoryChangeEvent } from '../git/models/repository.js';
+import { getReferenceLabel } from '../git/utils/reference.utils.js';
+import { executeCommand } from '../system/-webview/command.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { gate } from '../system/decorators/gate.js';
+import { RepositoriesSubscribeableNode } from './nodes/abstract/repositoriesSubscribeableNode.js';
+import { RepositoryFolderNode } from './nodes/abstract/repositoryFolderNode.js';
+import type { ViewNode } from './nodes/abstract/viewNode.js';
+import { StashesNode } from './nodes/stashesNode.js';
+import type { GroupedViewContext, RevealOptions } from './viewBase.js';
+import { ViewBase } from './viewBase.js';
+import type { CopyNodeCommandArgs } from './viewCommands.js';
+import { registerViewCommand } from './viewCommands.js';
 
 export class StashesRepositoryNode extends RepositoryFolderNode<StashesView, StashesNode> {
 	async getChildren(): Promise<ViewNode[]> {
@@ -27,7 +25,7 @@ export class StashesRepositoryNode extends RepositoryFolderNode<StashesView, Sta
 	}
 
 	protected changed(e: RepositoryChangeEvent): boolean {
-		return e.changed(RepositoryChange.Stash, RepositoryChange.Unknown, RepositoryChangeComparisonMode.Any);
+		return e.changed('stash', 'unknown');
 	}
 }
 
@@ -41,19 +39,15 @@ export class StashesViewNode extends RepositoriesSubscribeableNode<StashesView, 
 				await this.view.container.git.isDiscoveringRepositories;
 			}
 
-			let repositories = this.view.container.git.openRepositories;
+			const repositories = this.view.getFilteredRepositories();
 			if (!repositories.length) {
 				this.view.message = 'No stashes could be found.';
 				return [];
 			}
 
-			if (configuration.get('views.collapseWorktreesWhenPossible')) {
-				const grouped = await groupRepositories(repositories);
-				repositories = [...grouped.keys()];
-			}
-
+			const repo = this.view.container.git.getBestRepositoryOrFirst();
 			this.children = repositories.map(
-				r => new StashesRepositoryNode(GitUri.fromRepoPath(r.path), this.view, this, r),
+				r => new StashesRepositoryNode(GitUri.fromRepoPath(r.path), this.view, this, r, { expand: r === repo }),
 			);
 		}
 
@@ -116,6 +110,7 @@ export class StashesView extends ViewBase<'stashes', StashesViewNode, StashesVie
 				},
 				this,
 			),
+			registerViewCommand(this.getQualifiedCommand('filterRepositories'), () => this.filterRepositories(), this),
 			registerViewCommand(
 				this.getQualifiedCommand('setFilesLayoutToAuto'),
 				() => this.setFilesLayout('auto'),
@@ -145,8 +140,7 @@ export class StashesView extends ViewBase<'stashes', StashesViewNode, StashesVie
 			!configuration.changed(e, 'defaultDateStyle') &&
 			!configuration.changed(e, 'defaultGravatarsStyle') &&
 			!configuration.changed(e, 'defaultTimeFormat') &&
-			!configuration.changed(e, 'sortRepositoriesBy') &&
-			!configuration.changed(e, 'views.collapseWorktreesWhenPossible')
+			!configuration.changed(e, 'sortRepositoriesBy')
 		) {
 			return false;
 		}
@@ -173,10 +167,7 @@ export class StashesView extends ViewBase<'stashes', StashesViewNode, StashesVie
 	}
 
 	@gate(() => '')
-	async revealRepository(
-		repoPath: string,
-		options?: { select?: boolean; focus?: boolean; expand?: boolean | number },
-	): Promise<ViewNode | undefined> {
+	async revealRepository(repoPath: string, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const node = await this.findNode(n => n instanceof RepositoryFolderNode && n.repoPath === repoPath, {
 			maxDepth: 1,
 			canTraverse: n => n instanceof StashesViewNode || n instanceof RepositoryFolderNode,
@@ -190,14 +181,7 @@ export class StashesView extends ViewBase<'stashes', StashesViewNode, StashesVie
 	}
 
 	@gate(() => '')
-	async revealStash(
-		stash: GitStashReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealStash(stash: GitStashReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,

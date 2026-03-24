@@ -1,13 +1,12 @@
-import type { Response } from '@env/fetch';
-import { fetch } from '@env/fetch';
-import { gitKrakenProviderDescriptor as provider } from '../../constants.ai';
-import { AIError, AIErrorReason, AuthenticationRequiredError } from '../../errors';
-import { debug } from '../../system/decorators/log';
-import { Logger } from '../../system/logger';
-import { getLogScope } from '../../system/logger.scope';
-import type { AIActionType, AIModel } from './models/model';
-import { OpenAICompatibleProviderBase } from './openAICompatibleProviderBase';
-import { ensureAccount } from './utils/-webview/ai.utils';
+import type { Response } from '@env/fetch.js';
+import { fetch } from '@env/fetch.js';
+import { gitKrakenProviderDescriptor as provider } from '../../constants.ai.js';
+import { AIError, AIErrorReason, AuthenticationRequiredError } from '../../errors.js';
+import { trace } from '../../system/decorators/log.js';
+import { getScopedLogger } from '../../system/logger.scope.js';
+import type { AIActionType, AIModel } from './models/model.js';
+import { OpenAICompatibleProviderBase } from './openAICompatibleProviderBase.js';
+import { ensureAccount, getReducedMaxInputTokens } from './utils/-webview/ai.utils.js';
 
 type GitKrakenModel = AIModel<typeof provider.id>;
 
@@ -29,9 +28,9 @@ export class GitKrakenProvider extends OpenAICompatibleProviderBase<typeof provi
 		return session?.accessToken;
 	}
 
-	@debug()
+	@trace()
 	async getModels(): Promise<readonly AIModel<typeof provider.id>[]> {
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const url = this.container.urls.getGkAIApiUrl('providers/message-prompt');
@@ -77,7 +76,7 @@ export class GitKrakenProvider extends OpenAICompatibleProviderBase<typeof provi
 		} catch (ex) {
 			if (!(ex instanceof AuthenticationRequiredError)) {
 				debugger;
-				Logger.error(ex, scope, `Unable to get models`);
+				scope?.error(ex, `Unable to get models`);
 			}
 		}
 
@@ -177,8 +176,8 @@ export class GitKrakenProvider extends OpenAICompatibleProviderBase<typeof provi
 
 				// Request too large
 				if (code === 1) {
-					if (retries < 2) {
-						return { retry: true, maxInputTokens: maxInputTokens - 200 * (retries || 1) };
+					if (retries < 3) {
+						return { retry: true, maxInputTokens: getReducedMaxInputTokens(maxInputTokens, retries + 1) };
 					}
 					throw new AIError(
 						AIErrorReason.RequestTooLarge,

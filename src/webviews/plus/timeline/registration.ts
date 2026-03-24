@@ -1,11 +1,12 @@
 import { Disposable, Uri, ViewColumn } from 'vscode';
-import { registerCommand } from '../../../system/-webview/command';
-import { configuration } from '../../../system/-webview/configuration';
-import { getScmResourceFolderUri, isScmResourceState } from '../../../system/-webview/scm';
-import { isViewFileNode, isViewNode } from '../../../views/nodes/utils/-webview/node.utils';
-import type { WebviewPanelsProxy, WebviewsController, WebviewViewProxy } from '../../webviewsController';
-import type { State, TimelineScope } from './protocol';
-import { isTimelineScope } from './utils/-webview/timeline.utils';
+import type { Container } from '../../../container.js';
+import { registerCommand } from '../../../system/-webview/command.js';
+import { configuration } from '../../../system/-webview/configuration.js';
+import { getScmResourceFolderUri, isScm, isScmResourceState } from '../../../system/-webview/scm.js';
+import { isViewFileNode, isViewNode } from '../../../views/nodes/utils/-webview/node.utils.js';
+import type { WebviewPanelsProxy, WebviewsController, WebviewViewProxy } from '../../webviewsController.js';
+import type { State, TimelineScope } from './protocol.js';
+import { isTimelineScope } from './utils/-webview/timeline.utils.js';
 
 export type TimelineCommandArgs = TimelineScope;
 export type TimelineWebviewShowingArgs = [TimelineScope];
@@ -30,7 +31,7 @@ export function registerTimelineWebviewPanel(
 		},
 		async (container, host) => {
 			const { TimelineWebviewProvider } = await import(
-				/* webpackChunkName: "webview-timeline" */ './timelineWebview'
+				/* webpackChunkName: "webview-timeline" */ './timelineWebview.js'
 			);
 			return new TimelineWebviewProvider(container, host);
 		},
@@ -53,7 +54,7 @@ export function registerTimelineWebviewView(
 		},
 		async (container, host) => {
 			const { TimelineWebviewProvider } = await import(
-				/* webpackChunkName: "webview-timeline" */ './timelineWebview'
+				/* webpackChunkName: "webview-timeline" */ './timelineWebview.js'
 			);
 			return new TimelineWebviewProvider(container, host);
 		},
@@ -61,6 +62,7 @@ export function registerTimelineWebviewView(
 }
 
 export function registerTimelineWebviewCommands<T>(
+	container: Container,
 	panels: WebviewPanelsProxy<'gitlens.timeline', TimelineWebviewShowingArgs, T>,
 ): Disposable {
 	function show(scope?: TimelineScope | undefined): Promise<void> {
@@ -101,6 +103,23 @@ export function registerTimelineWebviewCommands<T>(
 		registerCommand('gitlens.visualizeHistory.folder:scm', (...args: unknown[]) => {
 			const uri = getScmResourceFolderUri(args);
 			return show(uri ? { type: 'folder', uri: uri } : undefined);
+		}),
+
+		registerCommand('gitlens.visualizeHistory.repo:scm', (...args: unknown[]) => {
+			const uri = isScm(args[0]) ? args[0].rootUri : container.git.getBestRepositoryOrFirst()?.uri;
+			return show(uri ? { type: 'repo', uri: uri } : undefined);
+		}),
+		registerCommand('gitlens.visualizeHistory.repo:views', (...args: unknown[]) => {
+			const [arg] = args;
+
+			let uri;
+			if (isViewNode(arg, 'repo-folder')) {
+				uri = arg.uri;
+			} else {
+				uri = container.git.getBestRepositoryOrFirst()?.uri;
+			}
+
+			return show(uri ? { type: 'repo', uri: uri } : undefined);
 		}),
 
 		registerCommand(`${panels.id}.refresh`, () => void panels.getActiveInstance()?.refresh(true)),

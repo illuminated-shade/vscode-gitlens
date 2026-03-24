@@ -1,16 +1,16 @@
 import { TreeItem, TreeItemCollapsibleState, window } from 'vscode';
-import { GlyphChars } from '../../constants';
-import { GitUri } from '../../git/gitUri';
-import type { GitLog } from '../../git/models/log';
-import type { GitReflogRecord } from '../../git/models/reflog';
-import { gate } from '../../system/decorators/-webview/gate';
-import { debug } from '../../system/decorators/log';
-import { map } from '../../system/iterable';
-import type { ViewsWithCommits } from '../viewBase';
-import type { PageableViewNode } from './abstract/viewNode';
-import { ContextValues, getViewNodeId, ViewNode } from './abstract/viewNode';
-import { CommitNode } from './commitNode';
-import { LoadMoreNode, MessageNode } from './common';
+import { GlyphChars } from '../../constants.js';
+import { GitUri } from '../../git/gitUri.js';
+import type { GitLog } from '../../git/models/log.js';
+import type { GitReflogRecord } from '../../git/models/reflog.js';
+import { gate } from '../../system/decorators/gate.js';
+import { trace } from '../../system/decorators/log.js';
+import { map } from '../../system/iterable.js';
+import type { ViewsWithCommits } from '../viewBase.js';
+import type { PageableViewNode } from './abstract/viewNode.js';
+import { ContextValues, getViewNodeId, ViewNode } from './abstract/viewNode.js';
+import { CommitNode } from './commitNode.js';
+import { LoadMoreNode, MessageNode } from './common.js';
 
 export class ReflogRecordNode extends ViewNode<'reflog-record', ViewsWithCommits> implements PageableViewNode {
 	limit: number | undefined;
@@ -40,7 +40,7 @@ export class ReflogRecordNode extends ViewNode<'reflog-record', ViewsWithCommits
 		];
 
 		if (log.hasMore) {
-			children.push(new LoadMoreNode(this.view, this, children[children.length - 1]));
+			children.push(new LoadMoreNode(this.view, this, children.at(-1)!));
 		}
 		return children;
 	}
@@ -68,7 +68,7 @@ export class ReflogRecordNode extends ViewNode<'reflog-record', ViewsWithCommits
 		return item;
 	}
 
-	@debug()
+	@trace()
 	override refresh(reset?: boolean): void {
 		if (reset) {
 			this._log = undefined;

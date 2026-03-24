@@ -1,8 +1,8 @@
 import { Signal, signal } from '@lit-labs/signals';
 import { AsyncComputed } from 'signal-utils/async-computed';
 import { signalObject } from 'signal-utils/object';
-import type { Deferrable } from '../../../../system/function/debounce';
-import { debounce } from '../../../../system/function/debounce';
+import type { Deferrable } from '../../../../system/function/debounce.js';
+import { debounce } from '../../../../system/function/debounce.js';
 
 export const renderAsyncComputed = <T, R = unknown>(
 	v: AsyncComputed<T>,
@@ -90,9 +90,7 @@ export class AsyncComputedState<T, R = unknown> {
 			return;
 		}
 
-		if (this._runDebounced == null) {
-			this._runDebounced = debounce(this._runCore.bind(this), this._debounce);
-		}
+		this._runDebounced ??= debounce(this._runCore.bind(this), this._debounce);
 
 		this._runDebounced();
 	}
@@ -118,8 +116,8 @@ export class AsyncComputedState<T, R = unknown> {
 	}
 }
 
-export function signalState<T>(initialValue?: T) {
-	return (_target: any, _fieldName: string, targetFields: { get?: () => T; set?: (v: T) => void }) => {
+export function signalState<T>(initialValue?: T, options?: { afterChange?: (target: any, value: T) => void }) {
+	return (target: any, _fieldName: string, targetFields: { get?: () => T; set?: (v: T) => void }) => {
 		if (targetFields.get && targetFields.set) {
 			const signal = new Signal.State(initialValue);
 			// eslint-disable-next-line @typescript-eslint/no-unsafe-return
@@ -127,8 +125,9 @@ export function signalState<T>(initialValue?: T) {
 				get: function () {
 					return signal.get();
 				},
-				set: function (value: any) {
+				set: function (value: T) {
 					signal.set(value);
+					options?.afterChange?.(target, value);
 				},
 			} as any;
 		}
@@ -138,7 +137,7 @@ export function signalState<T>(initialValue?: T) {
 
 export const signalObjectState = <T extends Record<PropertyKey, unknown> | undefined>(
 	initialValue?: T,
-	options: { afterChange?: (target: any, value: T) => void } = {},
+	options?: { afterChange?: (target: any, value: T) => void },
 ) => {
 	return (target: any, _fieldName: string, targetFields: { get?: () => T; set?: (v: T) => void }) => {
 		if (targetFields.get && targetFields.set) {
@@ -146,14 +145,14 @@ export const signalObjectState = <T extends Record<PropertyKey, unknown> | undef
 			// eslint-disable-next-line @typescript-eslint/no-unsafe-return
 			return {
 				get: function () {
-					// I don't return {...signal} for optimization purpose
+					// Don't return {...signal} for optimization purpose
 					return signal;
 				},
 				set: function (value: any) {
-					Object.entries(value).forEach(([key, value]) => {
-						signal[key] = value;
-					});
-					options.afterChange?.(target, value);
+					for (const [k, v] of Object.entries(value)) {
+						signal[k] = v;
+					}
+					options?.afterChange?.(target, value);
 				},
 			} as any;
 		}

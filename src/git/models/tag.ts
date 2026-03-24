@@ -1,15 +1,15 @@
-/* eslint-disable @typescript-eslint/no-restricted-imports -- TODO need to deal with sharing rich class shapes to webviews */
-import type { Container } from '../../container';
-import { formatDate, fromNow } from '../../system/date';
-import { memoize } from '../../system/decorators/-webview/memoize';
-import { getLoggableName } from '../../system/logger';
-import { getTagId, parseRefName } from '../utils/tag.utils';
-import type { GitTagReference } from './reference';
+import type { Container } from '../../container.js';
+import { formatDate, fromNow } from '../../system/date.js';
+import { loggable } from '../../system/decorators/log.js';
+import { memoize } from '../../system/decorators/memoize.js';
+import { getTagId, parseRefName } from '../utils/tag.utils.js';
+import type { GitTagReference } from './reference.js';
 
 export function isTag(tag: unknown): tag is GitTag {
 	return tag instanceof GitTag;
 }
 
+@loggable(i => i.id)
 export class GitTag implements GitTagReference {
 	readonly refType = 'tag';
 	readonly id: string;
@@ -33,10 +33,6 @@ export class GitTag implements GitTagReference {
 		this.id = getTagId(repoPath, this._name);
 	}
 
-	toString(): string {
-		return `${getLoggableName(this)}(${this.id})`;
-	}
-
 	get formattedDate(): string {
 		return this.container.TagDateFormatting.dateStyle === 'absolute'
 			? this.formatDate(this.container.TagDateFormatting.dateFormat)
@@ -47,7 +43,7 @@ export class GitTag implements GitTagReference {
 		return this.name;
 	}
 
-	@memoize<GitTag['formatCommitDate']>(format => format ?? 'MMMM Do, YYYY h:mma')
+	@memoize<GitTag['formatCommitDate']>({ resolver: format => format ?? 'MMMM Do, YYYY h:mma' })
 	formatCommitDate(format?: string | null): string {
 		return this.commitDate != null ? formatDate(this.commitDate, format ?? 'MMMM Do, YYYY h:mma') : '';
 	}
@@ -56,7 +52,7 @@ export class GitTag implements GitTagReference {
 		return this.commitDate != null ? fromNow(this.commitDate) : '';
 	}
 
-	@memoize<GitTag['formatDate']>(format => format ?? 'MMMM Do, YYYY h:mma')
+	@memoize<GitTag['formatDate']>({ resolver: format => format ?? 'MMMM Do, YYYY h:mma' })
 	formatDate(format?: string | null): string {
 		return this.date != null ? formatDate(this.date, format ?? 'MMMM Do, YYYY h:mma') : '';
 	}
@@ -69,5 +65,12 @@ export class GitTag implements GitTagReference {
 	getBasename(): string {
 		const index = this.name.lastIndexOf('/');
 		return index !== -1 ? this.name.substring(index + 1) : this.name;
+	}
+
+	/** Creates a copy of this tag with a different repoPath — ONLY used for worktree-aware caching */
+	withRepoPath(repoPath: string): GitTag {
+		return repoPath === this.repoPath
+			? this
+			: new GitTag(this.container, repoPath, this.refName, this.sha, this.message, this.date, this.commitDate);
 	}
 }

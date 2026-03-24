@@ -1,7 +1,7 @@
-import type { PageableResult } from '../../system/paging';
-import type { GitBranch, GitTrackingUpstream } from '../models/branch';
-import type { GitBranchReference, GitReference } from '../models/reference';
-import { shortenRevision } from './revision.utils';
+import type { PageableResult } from '../../system/paging.js';
+import type { GitBranch, GitTrackingUpstream } from '../models/branch.js';
+import type { GitBranchReference, GitReference } from '../models/reference.js';
+import { shortenRevision } from './revision.utils.js';
 
 const detachedHEADRegex = /^(HEAD|\(.*\))$/;
 
@@ -106,13 +106,15 @@ export function isOfBranchRefType(branch: GitReference | undefined): branch is G
 
 const localBranchesPrefixRegex = /^(refs\/)?heads\//i;
 const remoteBranchesPrefixRegex = /^(refs\/)?remotes\//i;
+const remoteHEADRegex = /^(refs\/)?remotes\/(.*\/)HEAD$/i;
+const trackingStateRegex = /(?:\[(?:ahead ([0-9]+))?[,\s]*(?:behind ([0-9]+))?]|\[(gone)])/;
 
 export function isRemoteBranch(refName: string): boolean {
 	return remoteBranchesPrefixRegex.test(refName);
 }
 
 export function isRemoteHEAD(refName: string): boolean {
-	return /^(refs\/)?remotes\/(.*\/)HEAD$/i.test(refName);
+	return remoteHEADRegex.test(refName);
 }
 
 export function parseRefName(refName: string): { name: string; remote: boolean } {
@@ -135,7 +137,7 @@ export function parseUpstream(upstream: string, tracking: string): GitTrackingUp
 
 	const { name } = parseRefName(upstream);
 
-	const match = /(?:\[(?:ahead ([0-9]+))?[,\s]*(?:behind ([0-9]+))?]|\[(gone)])/.exec(tracking);
+	const match = trackingStateRegex.exec(tracking);
 	if (match == null) {
 		return { name: name, missing: false, state: { ahead: 0, behind: 0 } };
 	}

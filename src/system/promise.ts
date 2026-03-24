@@ -1,12 +1,12 @@
 import type { CancellationToken, Disposable } from 'vscode';
-import { map } from './iterable';
+import { map } from './iterable.js';
 
 export type PromiseOrValue<T> = Promise<T> | T;
 
 export function any<T>(...promises: Promise<T>[]): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
 		let settled = false;
-		const onFullfilled = (r: T) => {
+		const onFulfilled = (r: T) => {
 			settled = true;
 			resolve(r);
 		};
@@ -31,7 +31,7 @@ export function any<T>(...promises: Promise<T>[]): Promise<T> {
 		};
 
 		for (const promise of promises) {
-			promise.then(onFullfilled, onRejected);
+			promise.then(onFulfilled, onRejected);
 		}
 	});
 }
@@ -135,7 +135,7 @@ export function cancellable<T>(
 		disposeCancellation = cancellation?.onCancellationRequested(() => resolver('cancelled'));
 		if (timeout != null) {
 			if (typeof timeout === 'number') {
-				const timer = setTimeout(() => resolver('timedout'), timeout);
+				const timer = setTimeout(resolver, timeout, 'timedout');
 				disposeTimeout = { dispose: () => clearTimeout(timer) };
 			} else {
 				disposeTimeout = timeout.onCancellationRequested(() => resolver('timedout'));
@@ -197,6 +197,19 @@ export function getDeferredPromiseIfPending<T>(deferred: Deferred<T> | undefined
 	return deferred?.pending ? deferred.promise : undefined;
 }
 
+export type MaybePromiseArr<T> = (Promise<T | undefined> | T | undefined)[];
+
+export async function nonnullSettled<T>(arr: MaybePromiseArr<T>): Promise<T[]> {
+	// eslint-disable-next-line @typescript-eslint/await-thenable
+	const all = await Promise.allSettled(arr);
+	return all.map(r => getSettledValue(r)).filter(v => v != null);
+}
+
+export async function flatSettled<T>(arr: MaybePromiseArr<(T | undefined)[]>): Promise<T[]> {
+	const all = await nonnullSettled(arr);
+	return all.flat().filter(v => v != null);
+}
+
 export function getSettledValue<T>(promise: PromiseSettledResult<T> | undefined): T | undefined;
 export function getSettledValue<T>(
 	promise: PromiseSettledResult<T> | undefined,
@@ -204,7 +217,7 @@ export function getSettledValue<T>(
 ): NonNullable<T>;
 export function getSettledValue<T>(
 	promise: PromiseSettledResult<T> | undefined,
-	defaultValue: T | undefined = undefined,
+	defaultValue?: T | undefined,
 ): T | typeof defaultValue {
 	return promise?.status === 'fulfilled' ? promise.value : defaultValue;
 }
@@ -302,7 +315,7 @@ export function pauseOnCancelOrTimeout<T>(
 		? result
 		: result.then(r => {
 				if (r.paused) {
-					setTimeout(() => continuation(r), 0);
+					setTimeout(continuation, 0, r);
 				}
 				return r;
 			});
@@ -438,6 +451,7 @@ export async function pauseOnCancelOrTimeoutMapTuple<Id, T, U extends unknown[]>
 	}
 
 	const results = await Promise.all(
+		// eslint-disable-next-line @typescript-eslint/await-thenable
 		map(source, ([id, [promise, ...rest]]) =>
 			promise == null
 				? ([id, [undefined, ...rest]] as const)
@@ -735,6 +749,6 @@ export class AggregateError extends Error {
 	constructor(readonly errors: Error[]) {
 		super(`AggregateError(${errors.length})\n${errors.map(e => `\t${String(e)}`).join('\n')}`);
 
-		Error.captureStackTrace?.(this, AggregateError);
+		Error.captureStackTrace?.(this, new.target);
 	}
 }

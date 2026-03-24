@@ -1,45 +1,46 @@
 import type { CancellationToken, ConfigurationChangeEvent, Disposable, Event } from 'vscode';
 import { EventEmitter, ProgressLocation, window } from 'vscode';
-import type { RepositoriesViewConfig, ViewBranchesLayout, ViewFilesLayout } from '../config';
-import type { Container } from '../container';
-import type { GitCommit } from '../git/models/commit';
-import { isCommit } from '../git/models/commit';
-import type { GitContributor } from '../git/models/contributor';
+import type { RepositoriesViewConfig, ViewBranchesLayout, ViewFilesLayout } from '../config.js';
+import type { Container } from '../container.js';
+import type { GitCommit } from '../git/models/commit.js';
+import { isCommit } from '../git/models/commit.js';
+import type { GitContributor } from '../git/models/contributor.js';
 import type {
 	GitBranchReference,
 	GitRevisionReference,
 	GitStashReference,
 	GitTagReference,
-} from '../git/models/reference';
-import type { GitRemote } from '../git/models/remote';
-import type { GitWorktree } from '../git/models/worktree';
-import { getRemoteNameFromBranchName } from '../git/utils/branch.utils';
-import { getReferenceLabel } from '../git/utils/reference.utils';
-import { executeCommand } from '../system/-webview/command';
-import { configuration } from '../system/-webview/configuration';
-import { setContext } from '../system/-webview/context';
-import { gate } from '../system/decorators/-webview/gate';
-import type { ViewNode } from './nodes/abstract/viewNode';
-import { BranchesNode } from './nodes/branchesNode';
-import { BranchNode } from './nodes/branchNode';
-import { BranchOrTagFolderNode } from './nodes/branchOrTagFolderNode';
-import { BranchTrackingStatusNode } from './nodes/branchTrackingStatusNode';
-import { CompareBranchNode } from './nodes/compareBranchNode';
-import { ContributorNode } from './nodes/contributorNode';
-import { ContributorsNode } from './nodes/contributorsNode';
-import { ReflogNode } from './nodes/reflogNode';
-import { RemoteNode } from './nodes/remoteNode';
-import { RemotesNode } from './nodes/remotesNode';
-import { RepositoriesNode } from './nodes/repositoriesNode';
-import { RepositoryNode } from './nodes/repositoryNode';
-import { StashesNode } from './nodes/stashesNode';
-import { TagsNode } from './nodes/tagsNode';
-import { WorktreeNode } from './nodes/worktreeNode';
-import { WorktreesNode } from './nodes/worktreesNode';
-import type { GroupedViewContext } from './viewBase';
-import { ViewBase } from './viewBase';
-import type { CopyNodeCommandArgs } from './viewCommands';
-import { registerViewCommand } from './viewCommands';
+} from '../git/models/reference.js';
+import type { GitRemote } from '../git/models/remote.js';
+import type { GitWorktree } from '../git/models/worktree.js';
+import { getRemoteNameFromBranchName } from '../git/utils/branch.utils.js';
+import { getReferenceLabel } from '../git/utils/reference.utils.js';
+import { executeCommand } from '../system/-webview/command.js';
+import { configuration } from '../system/-webview/configuration.js';
+import { setContext } from '../system/-webview/context.js';
+import { gate } from '../system/decorators/gate.js';
+import type { ViewNode } from './nodes/abstract/viewNode.js';
+import { BranchesNode } from './nodes/branchesNode.js';
+import { BranchNode } from './nodes/branchNode.js';
+import { BranchOrTagFolderNode } from './nodes/branchOrTagFolderNode.js';
+import { BranchTrackingStatusNode } from './nodes/branchTrackingStatusNode.js';
+import { CompareBranchNode } from './nodes/compareBranchNode.js';
+import { ContributorNode } from './nodes/contributorNode.js';
+import { ContributorsNode } from './nodes/contributorsNode.js';
+import { ReflogNode } from './nodes/reflogNode.js';
+import { RemoteNode } from './nodes/remoteNode.js';
+import { RemotesNode } from './nodes/remotesNode.js';
+import { RepositoriesNode } from './nodes/repositoriesNode.js';
+import { RepositoryNode } from './nodes/repositoryNode.js';
+import { StashesNode } from './nodes/stashesNode.js';
+import { TagsNode } from './nodes/tagsNode.js';
+import { WorktreeNode } from './nodes/worktreeNode.js';
+import { WorktreesNode } from './nodes/worktreesNode.js';
+import { updateSorting, updateSortingDirection } from './utils/-webview/sorting.utils.js';
+import type { GroupedViewContext, RevealOptions } from './viewBase.js';
+import { ViewBase } from './viewBase.js';
+import type { CopyNodeCommandArgs } from './viewCommands.js';
+import { registerViewCommand } from './viewCommands.js';
 
 export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode, RepositoriesViewConfig> {
 	private _onDidChangeAutoRefresh = new EventEmitter<void>();
@@ -95,6 +96,19 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 				() => this.setBranchesLayout('tree'),
 				this,
 			),
+			registerViewCommand(
+				this.getQualifiedCommand('setSortByDiscovered'),
+				() => this.setSortByDiscovered(),
+				this,
+			),
+			registerViewCommand(
+				this.getQualifiedCommand('setSortByLastFetched'),
+				() => this.setSortByLastFetched(),
+				this,
+			),
+			registerViewCommand(this.getQualifiedCommand('setSortByName'), () => this.setSortByName(), this),
+			registerViewCommand(this.getQualifiedCommand('setSortDescending'), () => this.setSortDescending(), this),
+			registerViewCommand(this.getQualifiedCommand('setSortAscending'), () => this.setSortAscending(), this),
 			registerViewCommand(
 				this.getQualifiedCommand('setFilesLayoutToAuto'),
 				() => this.setFilesLayout('auto'),
@@ -507,13 +521,13 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 		const { repoPath, uri } = worktree;
 		const url = uri.toString();
 
-		return this.findNode(n => n instanceof WorktreeNode && worktree.uri.toString() === url, {
+		return this.findNode(n => n instanceof WorktreeNode && n.worktree.uri.toString() === url, {
 			maxDepth: 2,
 			canTraverse: n => {
 				// Only search for worktree nodes in the same repo within WorktreesNode
 				if (n instanceof RepositoriesNode) return true;
 
-				if (n instanceof RepositoryNode || n instanceof WorktreesNode) {
+				if (n instanceof RepositoryNode || n instanceof WorktreesNode || n instanceof BranchOrTagFolderNode) {
 					return n.repoPath === repoPath;
 				}
 
@@ -524,14 +538,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealBranch(
-		branch: GitBranchReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealBranch(branch: GitBranchReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -553,14 +560,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealBranches(
-		repoPath: string,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealBranches(repoPath: string, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const node = await this.findNode(n => n instanceof BranchesNode && n.repoPath === repoPath, {
 			maxDepth: 2,
 			canTraverse: n => {
@@ -583,14 +583,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealCommit(
-		commit: GitRevisionReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealCommit(commit: GitRevisionReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -612,14 +605,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealContributor(
-		contributor: GitContributor,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealContributor(contributor: GitContributor, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -638,14 +624,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealRemote(
-		remote: GitRemote,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealRemote(remote: GitRemote, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -664,14 +643,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealRepository(
-		repoPath: string,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealRepository(repoPath: string, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const node = await this.findNode(n => n instanceof RepositoryNode && n.repoPath === repoPath, {
 			maxDepth: 1,
 			canTraverse: n => n instanceof RepositoriesNode,
@@ -685,14 +657,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealStash(
-		stash: GitStashReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealStash(stash: GitStashReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -714,14 +679,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealStashes(
-		repoPath: string,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealStashes(repoPath: string, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const node = await this.findNode(n => n instanceof StashesNode && n.repoPath === repoPath, {
 			maxDepth: 2,
 			canTraverse: n => {
@@ -744,14 +702,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealTag(
-		tag: GitTagReference,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealTag(tag: GitTagReference, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -773,14 +724,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealTags(
-		repoPath: string,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealTags(repoPath: string, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const node = await this.findNode(n => n instanceof TagsNode && n.repoPath === repoPath, {
 			maxDepth: 2,
 			canTraverse: n => {
@@ -803,14 +747,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealWorktree(
-		worktree: GitWorktree,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealWorktree(worktree: GitWorktree, options?: RevealOptions): Promise<ViewNode | undefined> {
 		return window.withProgress(
 			{
 				location: ProgressLocation.Notification,
@@ -829,14 +766,7 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 	}
 
 	@gate(() => '')
-	async revealWorktrees(
-		repoPath: string,
-		options?: {
-			select?: boolean;
-			focus?: boolean;
-			expand?: boolean | number;
-		},
-	): Promise<ViewNode | undefined> {
+	async revealWorktrees(repoPath: string, options?: RevealOptions): Promise<ViewNode | undefined> {
 		const node = await this.findNode(n => n instanceof WorktreesNode && n.repoPath === repoPath, {
 			maxDepth: 2,
 			canTraverse: n => {
@@ -878,6 +808,26 @@ export class RepositoriesView extends ViewBase<'repositories', RepositoriesNode,
 
 	private setFilesLayout(layout: ViewFilesLayout) {
 		return configuration.updateEffective(`views.${this.configKey}.files.layout` as const, layout);
+	}
+
+	private setSortByDiscovered() {
+		return updateSorting('sortRepositoriesBy', 'discovered', undefined);
+	}
+
+	private setSortByLastFetched() {
+		return updateSorting('sortRepositoriesBy', 'lastFetched', 'desc');
+	}
+
+	private setSortByName() {
+		return updateSorting('sortRepositoriesBy', 'name', 'asc');
+	}
+
+	private setSortDescending() {
+		return updateSortingDirection('sortRepositoriesBy', 'desc');
+	}
+
+	private setSortAscending() {
+		return updateSortingDirection('sortRepositoriesBy', 'asc');
 	}
 
 	private setShowAvatars(enabled: boolean) {

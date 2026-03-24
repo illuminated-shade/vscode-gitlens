@@ -18,6 +18,12 @@ const interfaceCache = new Map();
 const intersectionTypeCache = new Map();
 const unionTypeCache = new Map();
 
+/** @type Map<string, string> */
+const remappedTypes = new Map([
+	['GlCommands', 'string /* GlCommands */'],
+	['TrackedUsageKeys', 'string /* TrackedUsageKeys */'],
+]);
+
 const program = ts.createProgram(filePaths, {});
 const typeChecker = program.getTypeChecker();
 
@@ -111,7 +117,10 @@ fs.writeFileSync(outputPath, markdown);
 function expandType(file, type, indent = '', isRoot = true, prefix = '') {
 	let result = '';
 
-	if (type.isClassOrInterface() || (type.symbol && type.symbol.flags & ts.SymbolFlags.TypeLiteral)) {
+	const remapped = remappedTypes.get(typeChecker.typeToString(type));
+	if (remapped) {
+		result = remapped;
+	} else if (type.isClassOrInterface() || (type.symbol && type.symbol.flags & ts.SymbolFlags.TypeLiteral)) {
 		result = interfaceCache.get(type);
 		if (result == null) {
 			const properties = typeChecker.getPropertiesOfType(type);
@@ -185,6 +194,7 @@ function expandType(file, type, indent = '', isRoot = true, prefix = '') {
 			result = unionTypeCache.get(type);
 			if (result == null) {
 				const types = type.types
+					.filter(t => !(t.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Null)))
 					.map(t => expandType(file, t, indent, false, prefix))
 					.filter(t => Boolean(t))
 					.join(' | ')
@@ -291,7 +301,7 @@ function expandType(file, type, indent = '', isRoot = true, prefix = '') {
 		}
 	} else if (type.flags & ts.TypeFlags.Boolean) {
 		result = 'boolean';
-	} else if (type.flags & ts.TypeFlags.Never) {
+	} else if (type.flags & (ts.TypeFlags.Never | ts.TypeFlags.Undefined)) {
 		return '';
 	} else {
 		result = typeChecker.typeToString(type);
@@ -303,7 +313,7 @@ function expandType(file, type, indent = '', isRoot = true, prefix = '') {
 	return result;
 }
 
-function getJSDocTags(symbol) {
+function getJSDocTags(/** @type {import('typescript').Symbol } */ symbol) {
 	const tags = {};
 	const jsDocTags = symbol.getJsDocTags();
 	for (const tag of jsDocTags) {

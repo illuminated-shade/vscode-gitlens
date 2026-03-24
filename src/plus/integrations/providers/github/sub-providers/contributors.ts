@@ -1,20 +1,19 @@
 import type { CancellationToken } from 'vscode';
-import type { Container } from '../../../../../container';
-import { isCancellationError } from '../../../../../errors';
-import type { GitCache } from '../../../../../git/cache';
-import type { GitContributorsResult, GitContributorsSubProvider } from '../../../../../git/gitProvider';
-import type { GitCommit } from '../../../../../git/models/commit';
-import type { GitContributorsStats } from '../../../../../git/models/contributor';
-import { GitContributor } from '../../../../../git/models/contributor';
-import { getChangedFilesCount } from '../../../../../git/utils/commit.utils';
-import { calculateContributionScore } from '../../../../../git/utils/contributor.utils';
-import { isUserMatch } from '../../../../../git/utils/user.utils';
-import { log } from '../../../../../system/decorators/log';
-import { Logger } from '../../../../../system/logger';
-import { getLogScope } from '../../../../../system/logger.scope';
-import type { Cancellable } from '../../../../../system/promiseCache';
-import { PromiseCache } from '../../../../../system/promiseCache';
-import type { GitHubGitProviderInternal } from '../githubGitProvider';
+import type { Container } from '../../../../../container.js';
+import { isCancellationError } from '../../../../../errors.js';
+import type { GitCache } from '../../../../../git/cache.js';
+import type { GitContributorsResult, GitContributorsSubProvider } from '../../../../../git/gitProvider.js';
+import type { GitCommit } from '../../../../../git/models/commit.js';
+import type { GitContributorsStats } from '../../../../../git/models/contributor.js';
+import { GitContributor } from '../../../../../git/models/contributor.js';
+import { getChangedFilesCount } from '../../../../../git/utils/commit.utils.js';
+import { calculateContributionScore } from '../../../../../git/utils/contributor.utils.js';
+import { isUserMatch } from '../../../../../git/utils/user.utils.js';
+import { debug } from '../../../../../system/decorators/log.js';
+import { getScopedLogger } from '../../../../../system/logger.scope.js';
+import type { CacheController } from '../../../../../system/promiseCache.js';
+import { toTokenWithInfo } from '../../../authentication/models.js';
+import type { GitHubGitProviderInternal } from '../githubGitProvider.js';
 
 export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 	constructor(
@@ -23,7 +22,7 @@ export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 		private readonly provider: GitHubGitProviderInternal,
 	) {}
 
-	@log()
+	@debug()
 	async getContributors(
 		repoPath: string,
 		rev?: string | undefined,
@@ -39,9 +38,9 @@ export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 	): Promise<GitContributorsResult> {
 		if (repoPath == null) return { contributors: [] };
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
-		const getCore = async (cancellable?: Cancellable): Promise<GitContributorsResult> => {
+		const getCore = async (cacheable?: CacheController): Promise<GitContributorsResult> => {
 			const contributors: GitContributor[] = [];
 
 			try {
@@ -165,7 +164,7 @@ export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 				}
 
 				const results = await github.getContributors(
-					session.accessToken,
+					toTokenWithInfo(this.provider.authenticationProviderId, session),
 					metadata.repo.owner,
 					metadata.repo.name,
 				);
@@ -196,17 +195,14 @@ export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 					cancelled: cancellation?.isCancellationRequested ? { reason: 'cancelled' } : undefined,
 				};
 			} catch (ex) {
-				cancellable?.cancel();
-				Logger.error(ex, scope);
+				cacheable?.invalidate();
+				scope?.error(ex);
 				debugger;
 
 				if (!isCancellationError(ex)) return { contributors: [] };
 				return { contributors: [...contributors.values()], cancelled: { reason: 'cancelled' } };
 			}
 		};
-
-		const cache = this.cache.contributors;
-		if (cache == null) return getCore();
 
 		let customCacheTTL;
 
@@ -229,25 +225,15 @@ export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 			cacheKey += ':stats';
 		}
 
-		let contributorsCache = cache.get(repoPath);
-		if (contributorsCache == null) {
-			cache.set(
-				repoPath,
-				(contributorsCache = new PromiseCache<string, GitContributorsResult>({
-					accessTTL: 1000 * 60 * 60 /* 60 minutes */,
-				})),
-			);
-		}
-
-		const contributors = contributorsCache.get(
+		return this.cache.contributors.getOrCreate(
+			repoPath,
 			cacheKey,
 			getCore,
 			customCacheTTL ? { accessTTL: customCacheTTL } : undefined,
 		);
-		return contributors;
 	}
 
-	@log()
+	@debug()
 	async getContributorsLite(
 		repoPath: string,
 		_rev?: string | undefined,
@@ -256,13 +242,17 @@ export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 	): Promise<GitContributor[]> {
 		if (repoPath == null) return [];
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const { metadata, github, session } = await this.provider.ensureRepositoryContext(repoPath);
 			const currentUser = await this.provider.config.getCurrentUser(repoPath);
 
-			const results = await github.getContributors(session.accessToken, metadata.repo.owner, metadata.repo.name);
+			const results = await github.getContributors(
+				toTokenWithInfo(this.provider.authenticationProviderId, session),
+				metadata.repo.owner,
+				metadata.repo.name,
+			);
 
 			const contributors: GitContributor[] = [];
 			for (const c of results) {
@@ -287,13 +277,13 @@ export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 			}
 			return contributors;
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 			return [];
 		}
 	}
 
-	@log()
+	@debug()
 	async getContributorsStats(
 		repoPath: string,
 		_options?: { merges?: boolean | 'first-parent'; since?: string },
@@ -302,12 +292,16 @@ export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 	): Promise<GitContributorsStats | undefined> {
 		if (repoPath == null) return undefined;
 
-		const scope = getLogScope();
+		const scope = getScopedLogger();
 
 		try {
 			const { metadata, github, session } = await this.provider.ensureRepositoryContext(repoPath);
 
-			const results = await github.getContributors(session.accessToken, metadata.repo.owner, metadata.repo.name);
+			const results = await github.getContributors(
+				toTokenWithInfo(this.provider.authenticationProviderId, session),
+				metadata.repo.owner,
+				metadata.repo.name,
+			);
 
 			const contributions = results.map(c => c.contributions).sort((a, b) => b - a);
 
@@ -317,7 +311,7 @@ export class ContributorsGitSubProvider implements GitContributorsSubProvider {
 			};
 			return result;
 		} catch (ex) {
-			Logger.error(ex, scope);
+			scope?.error(ex);
 			debugger;
 			return undefined;
 		}
